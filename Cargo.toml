@@ -1,0 +1,56 @@
+[package]
+name = "zk-recursive"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "zk_recursive"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zk-recursive"
+path = "src/main.rs"
+
+[[bin]]
+name = "generate"
+path = "inputs/tools/generate.rs"
+
+[[bin]]
+name = "generate_poseidon"
+path = "inputs/tools/generate_poseidon.rs"
+
+[dependencies]
+plonky2 = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2", features = ["timing"] }
+plonky2_ecdsa = { git = "https://github.com/sommer-ph/plonky2-ecdsa", package = "plonky2_ecdsa", features = ["static-issuer"] }
+plonky2_sha512 = { git = "https://github.com/sommer-ph/plonky2_sha512" }
+# Note: bincode 1.3 used for compatibility with plonky2-ecdsa ecosystem
+bincode = "1.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.142"
+clap = { version = "4.5.45", features = ["derive"] }
+hex = "0.4"
+num-bigint = "0.4"
+num-traits = "0.2"
+k256 = { version = "0.13", features = ["ecdsa"] }
+p256 = "0.13"
+sha2 = "0.10"
+hmac = "0.12"
+log = "0.4.27"
+env_logger = "0.11.8"
+# Note: rand 0.8 used for compatibility with plonky2-ecdsa ecosystem
+rand = "0.8"
+
+[patch."https://github.com/0xPolygonZero/plonky2"]
+plonky2_field = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2_field" }
+plonky2_maybe_rayon = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2_maybe_rayon" }
+plonky2 = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2" }
+plonky2_util = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2_util" }
+
+[patch."https://github.com/0xPARC/plonky2"]
+plonky2_field = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2_field" }
+plonky2_maybe_rayon = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2_maybe_rayon" }
+plonky2 = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2" }
+plonky2_util = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2_util" }
+
+[dependencies.anyhow]
+version = "1.0.99"
