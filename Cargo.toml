@@ -25,6 +25,7 @@ log = "0.4.27"
 env_logger = "0.11.8"
 # Note: rand 0.8 used for compatibility with plonky2-ecdsa ecosystem
 rand = "0.8"
+rand_core = "0.6.4"
 
 [patch."https://github.com/0xPolygonZero/plonky2"]
 plonky2_field = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2_field" }
