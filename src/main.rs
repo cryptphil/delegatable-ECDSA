@@ -1,3 +1,4 @@
+use std::time::Instant;
 use anyhow::Result;
 use plonky2::{
     field::{secp256k1_scalar::Secp256K1Scalar, types::Sample},
@@ -34,6 +35,7 @@ fn main() -> Result<()> {
     let msg = Secp256K1Scalar::rand();
     let msg_target = builder.constant_nonnative(msg);
 
+
     let sk = ECDSASecretKey::<Curve>(Secp256K1Scalar::rand());
     let pk = ECDSAPublicKey((CurveScalar(sk.0) * Curve::GENERATOR_PROJECTIVE).to_affine());
 
@@ -48,10 +50,17 @@ fn main() -> Result<()> {
         r: r_target,
         s: s_target,
     };
-    verify_secp256k1_message_circuit(&mut builder, msg_target, sig_target, pk_target);
     println!("{sig:?}");
+
+    let build_start = Instant::now();
+    verify_secp256k1_message_circuit(&mut builder, msg_target, sig_target, pk_target);
     let data = builder.build::<C>();
+    println!("Circuit generation time: {:?}", build_start.elapsed());
+
+
+    let prove_start = Instant::now();
     let proof = data.prove(pw)?;
+    println!("Proof generation time: {:?}", prove_start.elapsed());
     data.verify(proof)?;
     Ok(())
 }

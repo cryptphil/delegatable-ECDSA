@@ -1,23 +1,9 @@
 [package]
-name = "zk-recursive"
+name = "delegatable_ecdsa"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
-[lib]
-name = "zk_recursive"
-path = "src/lib.rs"
-
-[[bin]]
-name = "zk-recursive"
-path = "src/main.rs"
-
-[[bin]]
-name = "generate"
-path = "inputs/tools/generate.rs"
-
-[[bin]]
-name = "generate_poseidon"
-path = "inputs/tools/generate_poseidon.rs"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 plonky2 = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2", features = ["timing"] }
