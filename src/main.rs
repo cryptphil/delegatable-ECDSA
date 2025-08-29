@@ -1,3 +1,5 @@
+mod cred;
+
 use std::time::Instant;
 use anyhow::Result;
 use plonky2::{
@@ -10,6 +12,7 @@ use plonky2::{
     },
 };
 use plonky2::field::extension::Extendable;
+use plonky2::field::types::Field;
 use plonky2::hash::hash_types::RichField;
 use plonky2::iop::witness::WitnessWrite;
 use plonky2::plonk::circuit_data::{VerifierCircuitData, VerifierCircuitTarget};
@@ -96,8 +99,15 @@ fn main() -> Result<()> {
 
     builder.verify_proof::<C>(&proof_t, &verifier_circuit_t, &verifier_data.common);
 
+    let x_t = builder.add_virtual_target();
+    let sum_t = builder.add_const(x_t, F::from_canonical_u64(7));
+    let expected_t = builder.constant(F::from_canonical_u64(42));
+    builder.connect(sum_t, expected_t);
+
     let mut pw = PartialWitness::<F>::new();
     pw.set_proof_with_pis_target(&proof_t, &proof)?;
+    pw.set_target(x_t, F::from_canonical_u64(33))?;
+
     let data = builder.build::<C>();
 
     let rec_proof_start = Instant::now();
