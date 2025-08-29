@@ -85,9 +85,12 @@ fn main() -> Result<()> {
     let proof_t = builder.add_virtual_proof_with_pis(&verifier_data.common);
     builder.register_public_inputs(&proof_t.public_inputs); // Now has the same public inputs as the inner proof
 
+    // This is how Philipp Sommer did it:
+    // let vd = builder.add_virtual_verifier_data(verifier_data.common.config.fri_config.cap_height);
+    // builder.verify_proof::<C>(&proof_t, &vd, &verifier_data.common);
+
     let constants_sigmas_cap_t =
         builder.constant_merkle_cap(&verifier_data.verifier_only.constants_sigmas_cap);
-
     let circuit_digest_t = builder.constant_hash(verifier_data.verifier_only.circuit_digest);
     let verifier_circuit_t = VerifierCircuitTarget {
         constants_sigmas_cap: constants_sigmas_cap_t,
