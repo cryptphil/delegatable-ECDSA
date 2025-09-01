@@ -14,6 +14,7 @@ use plonky2_ecdsa::gadgets::ecdsa::{verify_secp256k1_message_circuit, ECDSAPubli
 use plonky2::field::types::Sample;
 use plonky2_ecdsa::gadgets::nonnative::CircuitBuilderNonNative;
 use plonky2_ecdsa::gadgets::curve::CircuitBuilderCurve;
+use anyhow::Result;
 
 
 struct ECDSACred {
@@ -24,7 +25,7 @@ struct ECDSACred {
 
 /// Create a proof of knowledge of an ECDSA signature over secp256k1.
 pub fn make_ecdsa_proof<F, C, const D: usize, U>(
-) -> anyhow::Result<(VerifierCircuitData<F, C, D>, ProofWithPublicInputs<F, C, D>)>
+) -> Result<(VerifierCircuitData<F, C, D>, ProofWithPublicInputs<F, C, D>)>
 where
     F: RichField + Extendable<D>,
     C: GenericConfig<D, F = F>,
@@ -61,7 +62,7 @@ where
 }
 
 
-pub fn rand_ecdsa_signature() -> ECDSACred {
+fn rand_ecdsa_signature() -> ECDSACred {
     let msg = Secp256K1Scalar::rand();
 
     let sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
