@@ -109,7 +109,7 @@ fn main() -> Result<()> {
 
     let mut pw = PartialWitness::<F>::new();
     pw.set_proof_with_pis_target(&proof_t, &proof)?;
-    pw.set_target(x_t, F::from_canonical_u64(33))?;
+    pw.set_target(x_t, F::from_canonical_u64(35))?;
 
     let data = builder.build::<C>();
 
