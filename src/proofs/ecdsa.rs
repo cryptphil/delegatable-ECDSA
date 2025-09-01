@@ -16,6 +16,12 @@ use plonky2_ecdsa::gadgets::nonnative::CircuitBuilderNonNative;
 use plonky2_ecdsa::gadgets::curve::CircuitBuilderCurve;
 
 
+struct ECDSACred {
+    sig: ECDSASignature<Secp256K1>,
+    msg: Secp256K1Scalar,
+    pk: ECDSAPublicKey<Secp256K1>,
+}
+
 /// Create a proof of knowledge of an ECDSA signature over secp256k1.
 pub fn make_ecdsa_proof<F, C, const D: usize, U>(
 ) -> anyhow::Result<(VerifierCircuitData<F, C, D>, ProofWithPublicInputs<F, C, D>)>
@@ -29,16 +35,9 @@ where
     let pw = PartialWitness::new();
     let mut builder = CircuitBuilder::<F, D>::new(config);
 
-    let msg = Secp256K1Scalar::rand();
+    let ECDSACred { sig, msg, pk } = rand_ecdsa_signature();
     let msg_target = builder.constant_nonnative(msg);
-
-
-    let sk = ECDSASecretKey::<Curve>(Secp256K1Scalar::rand());
-    let pk = ECDSAPublicKey((CurveScalar(sk.0) * Curve::GENERATOR_PROJECTIVE).to_affine());
-
     let pk_target = ECDSAPublicKeyTarget(builder.constant_affine_point(pk.0));
-
-    let sig = sign_message(msg, sk);
 
     let ECDSASignature { r, s } = sig;
     let r_target = builder.constant_nonnative(r);
@@ -59,4 +58,17 @@ where
     println!("Proof generation time: {:?}", prove_start.elapsed());
     data.verify(proof.clone())?;
     Ok((data.verifier_data(), proof))
+}
+
+
+pub fn rand_ecdsa_signature() -> ECDSACred {
+    let msg = Secp256K1Scalar::rand();
+
+    let sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
+    let pk = ECDSAPublicKey((CurveScalar(sk.0) * Curve::GENERATOR_PROJECTIVE).to_affine());
+
+
+    let sig = sign_message(msg, sk);
+
+    ECDSACred { sig, msg, pk }
 }
