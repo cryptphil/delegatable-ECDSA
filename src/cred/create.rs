@@ -13,12 +13,12 @@ use sha2::{Digest, Sha256};
 pub struct Credential {
     pub cred_pubkey_hex: String,
     pub L: u8,
-    pub Name: String,
+    pub name: String,
 }
 
 pub struct IssuedCredential {
     pub credential: Credential,
-    pub cred_sk_hex: String,
+    pub cred_sk_hex: SigningKey,
     pub cred_pk: PublicKey,
     pub signature_der_hex: String,
 }
@@ -43,7 +43,7 @@ pub fn issue_credential(issuer_sk: &SigningKey) -> Result<IssuedCredential> {
     let cred = Credential {
         cred_pubkey_hex: cred_pubkey_bytes.encode_hex::<String>(),
         L: 0,
-        Name: "Alice".to_string(),
+        name: "Alice".to_string(),
     };
 
     // Serialize and sign with issuer SK
@@ -56,7 +56,7 @@ pub fn issue_credential(issuer_sk: &SigningKey) -> Result<IssuedCredential> {
 
     Ok(IssuedCredential {
         credential: cred,
-        cred_sk_hex: cred_sk.to_bytes().encode_hex::<String>(),
+        cred_sk_hex: cred_sk,
         cred_pk,
         signature_der_hex: sig.to_der().as_bytes().encode_hex::<String>(),
     })
