@@ -6,10 +6,10 @@ use k256::{
 };
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use rand_core::OsRng;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use sha2::{Digest, Sha256};
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Credential {
     pub cred_pk_compressed_hex: String,
     pub delegation_level: u8,
@@ -86,7 +86,7 @@ fn test_issue_credential() -> Result<()> {
         "Credential JSON: {}",
         serde_json::to_string_pretty(&issued.credential)?
     );
-    println!("Signature (DER hex): {}", issued.signature_hex);
+    println!("Signature (hex): {}", issued.signature_hex);
 
     // --- Reconstruct what was signed ---
     let cred_bytes = serde_json::to_vec(&issued.credential)?;
