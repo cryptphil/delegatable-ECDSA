@@ -11,16 +11,19 @@ use sha2::{Digest, Sha256};
 
 #[derive(Serialize)]
 pub struct Credential {
-    pub cred_pubkey_hex: String,
-    pub L: u8,
+    pub cred_pk_compressed_hex: String,
+    pub delegation_level: u8,
     pub name: String,
+    pub address: String,
+    pub birthdate: String,
 }
 
+#[allow(dead_code)]
 pub struct IssuedCredential {
     pub credential: Credential,
-    pub cred_sk_hex: SigningKey,
+    pub cred_sk: SigningKey,
     pub cred_pk: PublicKey,
-    pub signature_der_hex: String,
+    pub signature_hex: String,
 }
 
 /// Generate issuer keypair: (secret, public)
@@ -41,9 +44,11 @@ pub fn issue_credential(issuer_sk: &SigningKey) -> Result<IssuedCredential> {
 
     // Payload
     let cred = Credential {
-        cred_pubkey_hex: cred_pubkey_bytes.encode_hex::<String>(),
-        L: 0,
-        name: "Alice".to_string(),
+        cred_pk_compressed_hex: cred_pubkey_bytes.encode_hex::<String>(),
+        delegation_level: 0,
+        name: "Dax Dustermann".to_string(),
+        address: "Karolinenplatz 5, 64289 Darmstadt".to_string(),
+        birthdate: "1990-01-01".to_string(),
     };
 
     // Serialize and sign with issuer SK
@@ -56,9 +61,9 @@ pub fn issue_credential(issuer_sk: &SigningKey) -> Result<IssuedCredential> {
 
     Ok(IssuedCredential {
         credential: cred,
-        cred_sk_hex: cred_sk,
+        cred_sk,
         cred_pk,
-        signature_der_hex: sig.to_der().as_bytes().encode_hex::<String>(),
+        signature_hex: sig.to_der().as_bytes().encode_hex::<String>(),
     })
 }
 
@@ -81,13 +86,13 @@ fn test_issue_credential() -> Result<()> {
         "Credential JSON: {}",
         serde_json::to_string_pretty(&issued.credential)?
     );
-    println!("Signature (DER hex): {}", issued.signature_der_hex);
+    println!("Signature (DER hex): {}", issued.signature_hex);
 
     // --- Reconstruct what was signed ---
     let cred_bytes = serde_json::to_vec(&issued.credential)?;
 
     // --- Parse DER signature from hex ---
-    let sig_der = Vec::from_hex(&issued.signature_der_hex)?;
+    let sig_der = Vec::from_hex(&issued.signature_hex)?;
     let sig = Signature::from_der(&sig_der)?;
 
     // --- Convert issuer PublicKey -> VerifyingKey ---

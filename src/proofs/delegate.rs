@@ -7,6 +7,7 @@ use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use crate::proofs::ecdsa::make_ecdsa_proof;
 use anyhow::Result;
 
+#[allow(dead_code)]
 pub fn delegate() -> Result<()> {
     const D: usize = 2;
     type C = PoseidonGoldilocksConfig;

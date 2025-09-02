@@ -23,6 +23,7 @@ struct ECDSACred {
     pk: ECDSAPublicKey<Secp256K1>,
 }
 
+#[allow(dead_code)]
 /// Create a proof of knowledge of an ECDSA signature over secp256k1.
 pub fn make_ecdsa_proof<F, C, const D: usize, U>(
 ) -> Result<(VerifierCircuitData<F, C, D>, ProofWithPublicInputs<F, C, D>)>
