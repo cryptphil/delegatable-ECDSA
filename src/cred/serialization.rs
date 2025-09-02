@@ -6,7 +6,7 @@ use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::PublicKey;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use crate::cred::create::{generate_issuer_keypair, issue_credential, Credential, IssuedCredential};
+use crate::cred::create::{generate_issuer_keypair, issue_dummy_credential, Credential, IssuedCredential};
 
 #[derive(Serialize, Deserialize)]
 struct IssuerKeypairJson {
@@ -27,6 +27,7 @@ struct IssuedCredentialJson {
     pub signature_hex: String,
 }
 
+#[allow(dead_code)]
 /// Export only the issuer keypair to a JSON file.
 /// Returns the file path written.
 pub fn export_issuer_keypair_to_json(
@@ -50,6 +51,7 @@ pub fn export_issuer_keypair_to_json(
     Ok(issuer_path.to_string())
 }
 
+#[allow(dead_code)]
 /// Export only the issued credential (including holder keypair and issuer signature) to a JSON file.
 /// Returns the file path written.
 pub fn export_issued_credential_to_json(
@@ -75,6 +77,7 @@ pub fn export_issued_credential_to_json(
     Ok(issued_path.to_string())
 }
 
+#[allow(dead_code)]
 /// Read issuer keypair from JSON file written by `export_issuer_and_issued_to_json`.
 pub fn read_issuer_keypair_from_json(path: &str) -> anyhow::Result<(SigningKey, PublicKey)> {
     use std::fs;
@@ -95,6 +98,7 @@ pub fn read_issuer_keypair_from_json(path: &str) -> anyhow::Result<(SigningKey, 
     Ok((issuer_sk, issuer_pk))
 }
 
+#[allow(dead_code)]
 /// Read an issued credential from JSON file written by `export_issuer_and_issued_to_json`.
 pub fn read_issued_credential_from_json(path: &str) -> anyhow::Result<IssuedCredential> {
     use std::fs;
@@ -128,7 +132,7 @@ fn test_export_and_import_json_roundtrip() -> anyhow::Result<()> {
 
     // 1) Create issuer and issue a credential
     let (issuer_sk, issuer_pk) = generate_issuer_keypair();
-    let issued = issue_credential(&issuer_sk)?;
+    let issued = issue_dummy_credential(&issuer_sk)?;
 
     // 2) Export both to JSON files (relative to crate root)
     let issuer_path = "issuer_keypair.json";

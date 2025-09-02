@@ -26,6 +26,7 @@ pub struct IssuedCredential {
     pub signature_hex: String,
 }
 
+#[allow(dead_code)]
 /// Generate issuer keypair: (secret, public)
 pub fn generate_issuer_keypair() -> (SigningKey, PublicKey) {
     let sk = SigningKey::random(&mut OsRng);
@@ -34,8 +35,9 @@ pub fn generate_issuer_keypair() -> (SigningKey, PublicKey) {
     (sk, pk)
 }
 
-/// Issue a credential with its own keypair and attributes, signed by issuer_sk.
-pub fn issue_credential(issuer_sk: &SigningKey) -> Result<IssuedCredential> {
+#[allow(dead_code)]
+/// Issue a dummy credential for "Dax Dustermann" with its own keypair and attributes, signed by issuer_sk.
+pub fn issue_dummy_credential(issuer_sk: &SigningKey) -> Result<IssuedCredential> {
     // Credential keypair
     let cred_sk = SigningKey::random(&mut OsRng);
     let cred_vk: VerifyingKey = *cred_sk.verifying_key();
@@ -67,11 +69,52 @@ pub fn issue_credential(issuer_sk: &SigningKey) -> Result<IssuedCredential> {
     })
 }
 
+#[allow(dead_code)]
+/// Issue a credential with its own keypair and user-provided attributes, signed by issuer_sk.
+pub fn issue_credential(
+    issuer_sk: &SigningKey,
+    delegation_level: u8,
+    name: &str,
+    address: &str,
+    birthdate: &str,
+) -> Result<IssuedCredential> {
+    // Credential keypair
+    let cred_sk = SigningKey::random(&mut OsRng);
+    let cred_vk: VerifyingKey = *cred_sk.verifying_key();
+    let cred_pk: PublicKey = cred_vk.into();
+    let cred_pubkey_bytes = cred_pk.to_encoded_point(true).as_bytes().to_vec();
+
+    // Payload
+    let cred = Credential {
+        cred_pk_compressed_hex: cred_pubkey_bytes.encode_hex::<String>(),
+        delegation_level,
+        name: name.to_string(),
+        address: address.to_string(),
+        birthdate: birthdate.to_string(),
+    };
+
+    // Serialize and sign with issuer SK
+    let cred_bytes = serde_json::to_vec(&cred)?;
+    let sig: Signature = issuer_sk.sign_digest(Sha256::new().chain_update(&cred_bytes));
+
+    // Sanity verify using issuer VK
+    let issuer_vk: VerifyingKey = *issuer_sk.verifying_key();
+    issuer_vk.verify_digest(Sha256::new().chain_update(&cred_bytes), &sig)?;
+
+    Ok(IssuedCredential {
+        credential: cred,
+        cred_sk,
+        cred_pk,
+        signature_hex: sig.to_der().as_bytes().encode_hex::<String>(),
+    })
+}
+
+
 #[test]
 fn test_issue_credential() -> Result<()> {
     // Produce issuer keys and an issued credential + signature
     let (issuer_sk, issuer_pk) = generate_issuer_keypair();
-    let issued = issue_credential(&issuer_sk)?;
+    let issued = issue_dummy_credential(&issuer_sk)?;
 
     println!(
         "Issuer PK (compressed): {}",
