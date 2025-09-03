@@ -3,17 +3,19 @@ use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitTarget};
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
-use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use crate::proofs::ecdsa::make_ecdsa_proof;
 use anyhow::Result;
+use plonky2_ecdsa::curve::ecdsa::ECDSAPublicKey;
+use plonky2_ecdsa::curve::secp256k1::Secp256K1;
+use crate::cred::generate::IssuedEcdsaCredential;
 
 #[allow(dead_code)]
-pub fn delegate() -> Result<()> {
+pub fn delegate(cred: &IssuedEcdsaCredential, iss_pk: &ECDSAPublicKey<Secp256K1>) -> Result<()> {
     const D: usize = 2;
     type C = PoseidonGoldilocksConfig;
     type F = <C as GenericConfig<D>>::F;
 
-    let (verifier_data, proof) = make_ecdsa_proof::<F, C, D, Secp256K1>()?;
+    let (verifier_data, proof) = make_ecdsa_proof::<F, C, D>(cred, iss_pk)?;
 
     // Recursive proof
     let config = CircuitConfig::standard_recursion_zk_config();

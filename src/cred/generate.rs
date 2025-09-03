@@ -5,9 +5,8 @@ use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
 use plonky2::field::types::{Field, PrimeField, Sample};
 use plonky2_ecdsa::curve::curve_types::AffinePoint;
 use plonky2_ecdsa::curve::curve_types::{Curve, CurveScalar};
-use plonky2_ecdsa::curve::ecdsa::{
-    sign_message, verify_message, ECDSAPublicKey, ECDSASecretKey, ECDSASignature,
-};
+#[allow(unused_imports)]
+use plonky2_ecdsa::curve::ecdsa::{sign_message, verify_message, ECDSAPublicKey, ECDSASecretKey, ECDSASignature};
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 
 use serde::{Deserialize, Serialize};
@@ -77,6 +76,7 @@ pub fn issue_fixed_dummy_credential(
     })
 }
 
+#[allow(dead_code)]
 // Generates a fixed issuer keypair for testing purposes.
 pub fn generate_fixed_issuer_keypair() -> IssuerKeypair {
     let sk_hex = "53f053f57615a8ecb9afe430fc3ee292d6d0d4f1a1cb870d1dbdb51162a880a0";
@@ -160,10 +160,30 @@ fn hash_credential_to_scalar<T: serde::Serialize>(
 }
 
 #[test]
-fn test_issue_credential() -> Result<()> {
+fn test_issue_credential_fixed() -> Result<()> {
     // Produce issuer keys and an issued credential + signature
     let kp = generate_fixed_issuer_keypair();
     let issued = issue_fixed_dummy_credential(&kp.sk)?;
+
+    // Pretty-print some basics
+    println!("Issuer PK (compressed): {}", compressed_pubkey_hex(&kp.pk));
+    println!(
+        "Credential JSON: {}",
+        serde_json::to_string_pretty(&issued.credential)?
+    );
+
+    // Verify using Plonky2 ECDSA primitives over secp256k1
+    let is_valid = verify_message(issued.cred_hash, issued.signature, kp.pk);
+    assert!(is_valid, "issuer signature should verify");
+
+    Ok(())
+}
+
+#[test]
+fn test_issue_credential_random() -> Result<()> {
+    // Produce issuer keys and an issued credential + signature
+    let kp = generate_issuer_keypair();
+    let issued = issue_credential(&kp.sk, 0, "Bernd the Bread".to_string(), "Mürbeweg 3".to_string(), "too old".to_string())?;
 
     // Pretty-print some basics
     println!("Issuer PK (compressed): {}", compressed_pubkey_hex(&kp.pk));
