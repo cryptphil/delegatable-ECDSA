@@ -15,17 +15,14 @@ use plonky2::field::types::Sample;
 use plonky2_ecdsa::gadgets::nonnative::CircuitBuilderNonNative;
 use plonky2_ecdsa::gadgets::curve::CircuitBuilderCurve;
 use anyhow::Result;
+use crate::cred::generate::IssuedEcdsaCredential;
 
-
-struct ECDSACred {
-    sig: ECDSASignature<Secp256K1>,
-    msg: Secp256K1Scalar,
-    pk: ECDSAPublicKey<Secp256K1>,
-}
 
 #[allow(dead_code)]
 /// Create a proof of knowledge of an ECDSA signature over secp256k1.
-pub fn make_ecdsa_proof<F, C, const D: usize, U>(
+pub fn make_ecdsa_proof<F, C, const D: usize>(
+    cred: &IssuedEcdsaCredential,
+    iss_pk: &ECDSAPublicKey<Secp256K1>,
 ) -> Result<(VerifierCircuitData<F, C, D>, ProofWithPublicInputs<F, C, D>)>
 where
     F: RichField + Extendable<D>,
@@ -37,19 +34,18 @@ where
     let pw = PartialWitness::new();
     let mut builder = CircuitBuilder::<F, D>::new(config);
 
-    let ECDSACred { sig, msg, pk } = rand_ecdsa_signature();
-    let msg_target = builder.constant_nonnative(msg);
-    let pk_target = ECDSAPublicKeyTarget(builder.constant_affine_point(pk.0));
+    // Message = credential hash (Secp256K1Scalar)
+    let msg_target = builder.constant_nonnative(cred.cred_hash);
 
-    let ECDSASignature { r, s } = sig;
-    let r_target = builder.constant_nonnative(r);
-    let s_target = builder.constant_nonnative(s);
-    let sig_target = ECDSASignatureTarget {
-        r: r_target,
-        s: s_target,
-    };
-    println!("{sig:?}");
+    // Public key
+    let pk_target = ECDSAPublicKeyTarget(builder.constant_affine_point(iss_pk.0));
 
+    // Signature (r, s)
+    let r_target = builder.constant_nonnative(cred.signature.r);
+    let s_target = builder.constant_nonnative(cred.signature.s);
+    let sig_target = ECDSASignatureTarget { r: r_target, s: s_target };
+
+    // Verify inside circuit
     let build_start = Instant::now();
     verify_secp256k1_message_circuit(&mut builder, msg_target, sig_target, pk_target);
     let data = builder.build::<C>();
@@ -60,17 +56,4 @@ where
     println!("Proof generation time: {:?}", prove_start.elapsed());
     data.verify(proof.clone())?;
     Ok((data.verifier_data(), proof))
-}
-
-
-fn rand_ecdsa_signature() -> ECDSACred {
-    let msg = Secp256K1Scalar::rand();
-
-    let sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
-    let pk = ECDSAPublicKey((CurveScalar(sk.0) * Curve::GENERATOR_PROJECTIVE).to_affine());
-
-
-    let sig = sign_message(msg, sk);
-
-    ECDSACred { sig, msg, pk }
 }

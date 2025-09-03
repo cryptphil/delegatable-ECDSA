@@ -21,13 +21,16 @@ use plonky2_ecdsa::{
 };
 
 use proofs::ecdsa;
+use crate::cred::generate::{generate_issuer_keypair, issue_credential, issue_fixed_dummy_credential};
 
 fn main() -> Result<()> {
     const D: usize = 2;
     type C = PoseidonGoldilocksConfig;
     type F = <C as GenericConfig<D>>::F;
 
-    let (verifier_data, proof) = ecdsa::make_ecdsa_proof::<F, C, D, Secp256K1>()?;
+    let issuer = generate_issuer_keypair();
+    let cred = issue_fixed_dummy_credential(&issuer.sk)?;
+    let (verifier_data, proof) = ecdsa::make_ecdsa_proof::<F, C, D>(&cred, &issuer.pk)?;
 
     // Recursive proof
     let config = CircuitConfig::standard_recursion_zk_config();

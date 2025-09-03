@@ -160,10 +160,30 @@ fn hash_credential_to_scalar<T: serde::Serialize>(
 }
 
 #[test]
-fn test_issue_credential() -> Result<()> {
+fn test_issue_credential_fixed() -> Result<()> {
     // Produce issuer keys and an issued credential + signature
     let kp = generate_fixed_issuer_keypair();
     let issued = issue_fixed_dummy_credential(&kp.sk)?;
+
+    // Pretty-print some basics
+    println!("Issuer PK (compressed): {}", compressed_pubkey_hex(&kp.pk));
+    println!(
+        "Credential JSON: {}",
+        serde_json::to_string_pretty(&issued.credential)?
+    );
+
+    // Verify using Plonky2 ECDSA primitives over secp256k1
+    let is_valid = verify_message(issued.cred_hash, issued.signature, kp.pk);
+    assert!(is_valid, "issuer signature should verify");
+
+    Ok(())
+}
+
+#[test]
+fn test_issue_credential_random() -> Result<()> {
+    // Produce issuer keys and an issued credential + signature
+    let kp = generate_issuer_keypair();
+    let issued = issue_credential(&kp.sk, 0, "Bernd the Bread".to_string(), "Mürbeweg 3".to_string(), "too old".to_string())?;
 
     // Pretty-print some basics
     println!("Issuer PK (compressed): {}", compressed_pubkey_hex(&kp.pk));
