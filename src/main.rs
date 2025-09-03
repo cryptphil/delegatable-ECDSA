@@ -14,14 +14,9 @@ use plonky2::{
 use plonky2::field::types::Field;
 use plonky2::iop::witness::WitnessWrite;
 use plonky2::plonk::circuit_data::VerifierCircuitTarget;
-use plonky2_ecdsa::{
-    curve::{
-        secp256k1::Secp256K1,
-    },
-};
 
 use proofs::ecdsa;
-use crate::cred::generate::{generate_issuer_keypair, issue_credential, issue_fixed_dummy_credential};
+use crate::cred::generate::{generate_issuer_keypair, issue_fixed_dummy_credential};
 
 fn main() -> Result<()> {
     const D: usize = 2;
