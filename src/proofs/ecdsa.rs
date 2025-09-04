@@ -1,29 +1,23 @@
-use std::time::Instant;
-use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData};
-use plonky2::plonk::proof::ProofWithPublicInputs;
-use plonky2::hash::hash_types::RichField;
-use plonky2::field::extension::Extendable;
-use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
-use plonky2_ecdsa::curve::secp256k1::Secp256K1;
-use plonky2::iop::witness::{PartialWitness, WitnessWrite};
-use plonky2::plonk::circuit_builder::CircuitBuilder;
-use plonky2_ecdsa::curve::ecdsa::{ECDSAPublicKey};
-use plonky2_ecdsa::gadgets::ecdsa::{verify_secp256k1_message_circuit, ECDSAPublicKeyTarget, ECDSASignatureTarget};
-use plonky2_ecdsa::gadgets::nonnative::{CircuitBuilderNonNative, NonNativeTarget};
-use plonky2_ecdsa::gadgets::curve::{AffinePointTarget, CircuitBuilderCurve};
+use crate::cred::generate::IssuedEcdsaCredential;
+use crate::utils::parsing::set_nonnative_target;
 use anyhow::Result;
-use log::Level;
-use plonky2::field::goldilocks_field::GoldilocksField;
+use plonky2::field::extension::Extendable;
 use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
 use plonky2::field::types::PrimeField;
-use plonky2::plonk::prover::prove;
-use plonky2::util::timing::TimingTree;
+use plonky2::hash::hash_types::RichField;
+use plonky2::iop::witness::PartialWitness;
+use plonky2::plonk::circuit_builder::CircuitBuilder;
+use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData};
+use plonky2::plonk::config::GenericConfig;
+use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2_ecdsa::curve::curve_types::Curve;
-use plonky2_ecdsa::curve::p256::P256;
-use plonky2_ecdsa::field::p256_scalar::P256Scalar;
+use plonky2_ecdsa::curve::ecdsa::ECDSAPublicKey;
+use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use plonky2_ecdsa::gadgets::biguint::WitnessBigUint;
-use crate::utils::parsing::{set_nonnative_target};
-use crate::cred::generate::IssuedEcdsaCredential;
+use plonky2_ecdsa::gadgets::curve::{AffinePointTarget, CircuitBuilderCurve};
+use plonky2_ecdsa::gadgets::ecdsa::{verify_secp256k1_message_circuit, ECDSAPublicKeyTarget, ECDSASignatureTarget};
+use plonky2_ecdsa::gadgets::nonnative::{CircuitBuilderNonNative, NonNativeTarget};
+use std::time::Instant;
 
 
 #[allow(dead_code)]
