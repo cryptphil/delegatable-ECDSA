@@ -17,9 +17,9 @@ use crate::cred::generate::IssuedEcdsaCredential;
 
 #[allow(dead_code)]
 /// Create a proof of knowledge of an ECDSA signature over secp256k1.
-pub fn make_ecdsa_proof<F, C, const D: usize>(
+pub fn gen_init_delegation_proof<F, C, const D: usize>(
     cred: &IssuedEcdsaCredential,
-    iss_pk: &ECDSAPublicKey<Secp256K1>,
+    iss_pk: &ECDSAPublicKey<Secp256K1>
 ) -> Result<(VerifierCircuitData<F, C, D>, ProofWithPublicInputs<F, C, D>)>
 where
     F: RichField + Extendable<D>,

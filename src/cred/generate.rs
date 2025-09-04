@@ -144,7 +144,7 @@ pub(crate) fn compressed_pubkey_hex(pk: &ECDSAPublicKey<Secp256K1>) -> String {
     hex::encode(compressed)
 }
 
-fn hash_credential_to_scalar<T: serde::Serialize>(
+pub fn hash_credential_to_scalar<T: serde::Serialize>(
     credential: &T,
 ) -> anyhow::Result<Secp256K1Scalar> {
     let cred_bytes = serde_json::to_vec(credential)?;
