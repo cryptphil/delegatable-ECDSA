@@ -1,5 +1,6 @@
 mod cred;
 mod proofs;
+mod utils;
 
 use std::time::Instant;
 use anyhow::Result;
