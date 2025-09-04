@@ -48,7 +48,7 @@ pub fn generate_issuer_keypair() -> IssuerKeypair {
 }
 
 #[allow(dead_code)]
-/// Generates a fixed-issued credential for "Dax Dustermann" for testing purposes.
+// Generates a fixed-issued credential for "Dax Dustermann" for testing purposes.
 pub fn issue_fixed_dummy_credential(
     issuer_sk: &ECDSASecretKey<Secp256K1>,
 ) -> Result<IssuedEcdsaCredential> {
@@ -72,6 +72,34 @@ pub fn issue_fixed_dummy_credential(
         cred_hash,
         cred_sk,
         cred_pk,
+        signature,
+    })
+}
+
+// Derive a delegated credential from a base credential
+pub fn delegate_credential(base_credential: &IssuedEcdsaCredential) -> Result<IssuedEcdsaCredential> {
+    let next_cred_sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
+    let next_cred_pk =
+        ECDSAPublicKey((CurveScalar(next_cred_sk.0) * Curve::GENERATOR_PROJECTIVE).to_affine());
+
+    let next_delegation_level = base_credential.credential.delegation_level + 1;
+
+    let credential = Credential {
+        cred_pk_sec1_compressed: compressed_pubkey_hex(&next_cred_pk),
+        delegation_level: next_delegation_level,
+        name: base_credential.credential.name.clone(),
+        address: base_credential.credential.address.clone(),
+        birthdate: base_credential.credential.birthdate.clone(),
+    };
+
+    let cred_hash = hash_credential_to_scalar(&credential)?;
+    let signature = sign_message(cred_hash, base_credential.cred_sk);
+
+    Ok(IssuedEcdsaCredential {
+        credential,
+        cred_hash,
+        cred_sk: next_cred_sk,
+        cred_pk: next_cred_pk,
         signature,
     })
 }
@@ -194,6 +222,19 @@ fn test_issue_credential_random() -> Result<()> {
 
     // Verify using Plonky2 ECDSA primitives over secp256k1
     let is_valid = verify_message(issued.cred_hash, issued.signature, kp.pk);
+    assert!(is_valid, "issuer signature should verify");
+
+    Ok(())
+}
+
+#[test]
+fn test_delegate_credential() -> Result<()> {
+    let kp = generate_fixed_issuer_keypair();
+    let issued = issue_fixed_dummy_credential(&kp.sk)?;
+    let delegated = delegate_credential(&issued)?;
+    println!("Delegated credential JSON: {}", serde_json::to_string_pretty(&delegated.credential)?);
+
+    let is_valid = verify_message(delegated.cred_hash, delegated.signature, issued.cred_pk);
     assert!(is_valid, "issuer signature should verify");
 
     Ok(())
