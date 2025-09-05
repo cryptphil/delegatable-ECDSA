@@ -1,2 +1,2 @@
 pub(crate) mod ecdsa;
-mod delegate;
+pub(crate) mod delegate;

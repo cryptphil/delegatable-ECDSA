@@ -1,23 +1,24 @@
-use std::time::Instant;
+use crate::cred::generate::IssuedEcdsaCredential;
+use crate::proofs::ecdsa::make_ecdsa_proof;
+use anyhow::Result;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitTarget};
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
-use crate::proofs::ecdsa::make_ecdsa_proof;
-use anyhow::Result;
 use plonky2_ecdsa::curve::ecdsa::ECDSAPublicKey;
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
-use crate::cred::generate::IssuedEcdsaCredential;
+use std::time::Instant;
 
 #[allow(dead_code)]
-pub fn delegate(cred: &IssuedEcdsaCredential, iss_pk: &ECDSAPublicKey<Secp256K1>) -> Result<()> {
+pub fn init_delegate(cred: &IssuedEcdsaCredential, iss_pk: &ECDSAPublicKey<Secp256K1>) -> Result<()> {
     const D: usize = 2;
     type C = PoseidonGoldilocksConfig;
     type F = <C as GenericConfig<D>>::F;
 
+    // Prove over the ECDSA credential.
     let (verifier_data, proof) = make_ecdsa_proof::<F, C, D>(cred, iss_pk)?;
 
-    // Recursive proof
+    // Set up the recursive proof.
     let config = CircuitConfig::standard_recursion_zk_config();
     let mut builder = CircuitBuilder::<F, D>::new(config);
 
@@ -36,6 +37,7 @@ pub fn delegate(cred: &IssuedEcdsaCredential, iss_pk: &ECDSAPublicKey<Secp256K1>
         circuit_digest: circuit_digest_t,
     };
 
+    // Recursively verify the inner proof.
     builder.verify_proof::<C>(&proof_t, &verifier_circuit_t, &verifier_data.common);
 
     let mut pw = PartialWitness::<F>::new();

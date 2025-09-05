@@ -106,7 +106,7 @@ where
     Ok((circuit.data.verifier_data(), proof))
 }
 
-// #[allow(dead_code)]
+
 // /// Create a proof of knowledge of an ECDSA signature over secp256k1.
 // pub fn make_ecdsa_proof<F, C, const D: usize>(
 //     cred: &IssuedEcdsaCredential,
