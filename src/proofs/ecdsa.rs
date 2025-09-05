@@ -1,4 +1,4 @@
-use crate::cred::generate::SignedECDSACredential;
+use crate::cred::credential::SignedECDSACredential;
 use crate::utils::parsing::set_nonnative_target;
 use anyhow::Result;
 use plonky2::field::extension::Extendable;

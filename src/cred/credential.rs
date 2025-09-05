@@ -12,7 +12,6 @@ use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-#[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
 pub struct CredentialData {
     pub cred_pk_sec1_compressed: String,
@@ -22,7 +21,6 @@ pub struct CredentialData {
     pub birthdate: String,
 }
 
-#[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
 pub struct SignedECDSACredential {
     pub credential: CredentialData,
@@ -32,14 +30,12 @@ pub struct SignedECDSACredential {
     pub signature: ECDSASignature<Secp256K1>,
 }
 
-#[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
 pub struct IssuerKeypair {
     pub sk: ECDSASecretKey<Secp256K1>,
     pub pk: ECDSAPublicKey<Secp256K1>,
 }
 
-#[allow(dead_code)]
 /// Generate issuer keypair: (secret, public)
 pub fn generate_issuer_keypair() -> IssuerKeypair {
     let sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
@@ -47,7 +43,6 @@ pub fn generate_issuer_keypair() -> IssuerKeypair {
     IssuerKeypair { sk, pk }
 }
 
-#[allow(dead_code)]
 /// Generates a fixed-issued credential for "Dax Dustermann" for testing purposes.
 pub fn issue_fixed_dummy_credential(
     issuer_sk: &ECDSASecretKey<Secp256K1>,
@@ -56,7 +51,7 @@ pub fn issue_fixed_dummy_credential(
     let cred_sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::from_noncanonical_biguint(BigUint::from_str_radix(cred_sk_hex, 16)?));
     let cred_pk = ECDSAPublicKey((CurveScalar(cred_sk.0) * Curve::GENERATOR_PROJECTIVE).to_affine());
 
-    let credential = CredentialData {
+    let cred_data = CredentialData {
         cred_pk_sec1_compressed: compressed_pubkey_hex(&cred_pk),
         delegation_level: 0,
         name: "Dax Dustermann".to_string(),
@@ -64,11 +59,11 @@ pub fn issue_fixed_dummy_credential(
         birthdate: "1990-01-01".to_string(),
     };
 
-    let cred_hash = hash_credential_to_scalar(&credential)?;
+    let cred_hash = hash_credential_to_scalar(&cred_data)?;
     let signature = sign_message(cred_hash, *issuer_sk);
 
     Ok(SignedECDSACredential {
-        credential,
+        credential: cred_data,
         cred_hash,
         cred_sk,
         cred_pk,
@@ -76,7 +71,6 @@ pub fn issue_fixed_dummy_credential(
     })
 }
 
-#[allow(dead_code)]
 // Generates a fixed issuer keypair for testing purposes.
 pub fn generate_fixed_issuer_keypair() -> IssuerKeypair {
     let sk_hex = "53f053f57615a8ecb9afe430fc3ee292d6d0d4f1a1cb870d1dbdb51162a880a0";
@@ -85,7 +79,6 @@ pub fn generate_fixed_issuer_keypair() -> IssuerKeypair {
     IssuerKeypair { sk, pk }
 }
 
-#[allow(dead_code)]
 /// Issue a credential with its own keypair and user-provided attributes, signed by issuer_sk.
 pub fn issue_credential(
     issuer_sk: &ECDSASecretKey<Secp256K1>,
@@ -144,9 +137,7 @@ pub(crate) fn compressed_pubkey_hex(pk: &ECDSAPublicKey<Secp256K1>) -> String {
     hex::encode(compressed)
 }
 
-fn hash_credential_to_scalar<T: serde::Serialize>(
-    credential: &T,
-) -> Result<Secp256K1Scalar> {
+fn hash_credential_to_scalar(credential: &CredentialData) -> Result<Secp256K1Scalar> {
     let cred_bytes = serde_json::to_vec(credential)?;
     let digest = Sha256::digest(&cred_bytes); // 32 bytes
 

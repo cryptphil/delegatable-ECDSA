@@ -1,4 +1,4 @@
-use crate::cred::generate::SignedECDSACredential;
+use crate::cred::credential::SignedECDSACredential;
 use crate::proofs::ecdsa::make_ecdsa_proof;
 use anyhow::Result;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
