@@ -49,8 +49,9 @@ pub fn init_delegate(cred: &IssuedEcdsaCredential, iss_pk: &ECDSAPublicKey<Secp2
     let proof_recursive = data.prove(pw)?;
     println!("Recursive proof generation time: {:?}", rec_proof_start.elapsed());
 
+
     data.verify(proof_recursive.clone())?;
     println!("Recursive proof passed!");
-    println!("public inputs :{:?}", proof_recursive.public_inputs);
+    println!("Public inputs :{:?}", proof_recursive.public_inputs);
     Ok(())
 }

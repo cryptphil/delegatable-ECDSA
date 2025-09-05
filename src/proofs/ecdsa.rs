@@ -47,8 +47,12 @@ where
     let r_target = builder.add_virtual_nonnative_target();
     let s_target = builder.add_virtual_nonnative_target();
     let pk_target = ECDSAPublicKeyTarget(builder.add_virtual_affine_point_target());
-
     let sig_target = ECDSASignatureTarget { r: r_target, s: s_target };
+
+    // Register the issuer public key as public input.
+    for limb in pk_target.0.x.value.limbs.iter().chain(pk_target.0.y.value.limbs.iter()) {
+        builder.register_public_input(limb.0);
+    }
 
     verify_secp256k1_message_circuit(&mut builder, msg_target.clone(), sig_target.clone(), pk_target.clone());
     let data = builder.build::<Cfg>();
