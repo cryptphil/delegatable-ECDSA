@@ -1,4 +1,4 @@
-use crate::cred::generate::IssuedEcdsaCredential;
+use crate::cred::generate::SignedECDSACredential;
 use crate::utils::parsing::set_nonnative_target;
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
@@ -69,7 +69,7 @@ where
 
 pub fn prove_ecdsa<F, Cfg, const D: usize>(
     circuit: &ECDSACircuit<F, Cfg, D>,
-    cred: &IssuedEcdsaCredential,
+    cred: &SignedECDSACredential,
     iss_pk: &ECDSAPublicKey<Secp256K1>,
 ) -> Result<ProofWithPublicInputs<F, Cfg, D>>
 where
@@ -93,7 +93,7 @@ where
 
 
 pub fn make_ecdsa_proof<F, Cfg, const D: usize>(
-    cred: &IssuedEcdsaCredential,
+    cred: &SignedECDSACredential,
     iss_pk: &ECDSAPublicKey<Secp256K1>,
 ) -> Result<(VerifierCircuitData<F, Cfg, D>, ProofWithPublicInputs<F, Cfg, D>)>
 where

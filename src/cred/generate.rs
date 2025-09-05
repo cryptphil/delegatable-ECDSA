@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 
 #[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
-pub struct Credential {
+pub struct CredentialData {
     pub cred_pk_sec1_compressed: String,
     pub delegation_level: u8,
     pub name: String,
@@ -24,8 +24,8 @@ pub struct Credential {
 
 #[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
-pub struct IssuedEcdsaCredential {
-    pub credential: Credential,
+pub struct SignedECDSACredential {
+    pub credential: CredentialData,
     pub cred_hash: Secp256K1Scalar,
     pub cred_sk: ECDSASecretKey<Secp256K1>,
     pub cred_pk: ECDSAPublicKey<Secp256K1>,
@@ -51,12 +51,12 @@ pub fn generate_issuer_keypair() -> IssuerKeypair {
 /// Generates a fixed-issued credential for "Dax Dustermann" for testing purposes.
 pub fn issue_fixed_dummy_credential(
     issuer_sk: &ECDSASecretKey<Secp256K1>,
-) -> Result<IssuedEcdsaCredential> {
+) -> Result<SignedECDSACredential> {
     let cred_sk_hex = "a4cd2bdcbf30c77205fca6f3873ff19b8a60f74eac38c0c259eb6ef880a9a5da";
     let cred_sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::from_noncanonical_biguint(BigUint::from_str_radix(cred_sk_hex, 16)?));
     let cred_pk = ECDSAPublicKey((CurveScalar(cred_sk.0) * Curve::GENERATOR_PROJECTIVE).to_affine());
 
-    let credential = Credential {
+    let credential = CredentialData {
         cred_pk_sec1_compressed: compressed_pubkey_hex(&cred_pk),
         delegation_level: 0,
         name: "Dax Dustermann".to_string(),
@@ -67,7 +67,7 @@ pub fn issue_fixed_dummy_credential(
     let cred_hash = hash_credential_to_scalar(&credential)?;
     let signature = sign_message(cred_hash, *issuer_sk);
 
-    Ok(IssuedEcdsaCredential {
+    Ok(SignedECDSACredential {
         credential,
         cred_hash,
         cred_sk,
@@ -93,12 +93,12 @@ pub fn issue_credential(
     name: String,
     address: String,
     birthdate: String,
-) -> Result<IssuedEcdsaCredential> {
+) -> Result<SignedECDSACredential> {
     let cred_sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
     let cred_pk =
         ECDSAPublicKey((CurveScalar(cred_sk.0) * Curve::GENERATOR_PROJECTIVE).to_affine());
 
-    let credential = Credential {
+    let credential = CredentialData {
         cred_pk_sec1_compressed: compressed_pubkey_hex(&cred_pk),
         delegation_level,
         name,
@@ -109,7 +109,7 @@ pub fn issue_credential(
     let cred_hash = hash_credential_to_scalar(&credential)?;
     let signature = sign_message(cred_hash, *issuer_sk);
 
-    Ok(IssuedEcdsaCredential {
+    Ok(SignedECDSACredential {
         credential,
         cred_hash,
         cred_sk,
@@ -146,14 +146,14 @@ pub(crate) fn compressed_pubkey_hex(pk: &ECDSAPublicKey<Secp256K1>) -> String {
 
 fn hash_credential_to_scalar<T: serde::Serialize>(
     credential: &T,
-) -> anyhow::Result<Secp256K1Scalar> {
+) -> Result<Secp256K1Scalar> {
     let cred_bytes = serde_json::to_vec(credential)?;
     let digest = Sha256::digest(&cred_bytes); // 32 bytes
 
     // Convert into [u64; 4] (big-endian order)
     let mut limbs = [0u64; 4];
     for (i, chunk) in digest.chunks_exact(8).enumerate() {
-        limbs[i] = u64::from_be_bytes(chunk.try_into().unwrap());
+        limbs[i] = u64::from_be_bytes(chunk.try_into()?);
     }
 
     Ok(Secp256K1Scalar(limbs))

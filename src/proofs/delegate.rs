@@ -1,4 +1,4 @@
-use crate::cred::generate::IssuedEcdsaCredential;
+use crate::cred::generate::SignedECDSACredential;
 use crate::proofs::ecdsa::make_ecdsa_proof;
 use anyhow::Result;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
@@ -10,7 +10,7 @@ use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use std::time::Instant;
 
 #[allow(dead_code)]
-pub fn init_delegate(cred: &IssuedEcdsaCredential, iss_pk: &ECDSAPublicKey<Secp256K1>) -> Result<()> {
+pub fn init_delegate(cred: &SignedECDSACredential, iss_pk: &ECDSAPublicKey<Secp256K1>) -> Result<()> {
     const D: usize = 2;
     type C = PoseidonGoldilocksConfig;
     type F = <C as GenericConfig<D>>::F;
@@ -53,5 +53,9 @@ pub fn init_delegate(cred: &IssuedEcdsaCredential, iss_pk: &ECDSAPublicKey<Secp2
     data.verify(proof_recursive.clone())?;
     println!("Recursive proof passed!");
     println!("Public inputs :{:?}", proof_recursive.public_inputs);
+    Ok(())
+}
+
+pub fn delegate() -> Result<()> {
     Ok(())
 }
