@@ -24,7 +24,7 @@ pub fn prove_sha256(msg: &[u8]) -> anyhow::Result<()> {
     let mut pw = PartialWitness::new();
 
     for i in 0..len {
-        pw.set_bool_target(targets.message[i], msg_bits[i]);
+        pw.set_bool_target(targets.message[i], msg_bits[i])?;
     }
 
     let expected_res = plonky2_sha256::circuit::array_to_bits(hash.as_slice());
@@ -52,11 +52,13 @@ pub fn prove_sha256(msg: &[u8]) -> anyhow::Result<()> {
     res
 }
 
+#[test]
 fn test_sha256_proof_hello() -> anyhow::Result<()> {
     let msg = b"Hello, world!";
     prove_sha256(msg)
 }
 
+#[test]
 fn test_sha256_proof_credential() -> anyhow::Result<()> {
     let credential = CredentialData {
         cred_pk_sec1_compressed: "".to_string(),
