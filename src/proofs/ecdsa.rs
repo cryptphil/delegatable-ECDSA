@@ -50,6 +50,7 @@ where
     let sig_target = ECDSASignatureTarget { r: r_target, s: s_target };
 
     // Register the issuer public key as public input.
+    // TODO: Pretty print the issuer's public key at some later point.
     for limb in pk_target.0.x.value.limbs.iter().chain(pk_target.0.y.value.limbs.iter()) {
         builder.register_public_input(limb.0);
     }
