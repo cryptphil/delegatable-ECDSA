@@ -166,7 +166,8 @@ pub(crate) fn compressed_pubkey_hex(pk: &ECDSAPublicKey<Secp256K1>) -> String {
 }
 
 fn hash_credential_to_scalar(credential: &CredentialData) -> Result<Secp256K1Scalar> {
-    let cred_bytes = serde_json::to_vec(credential)?;
+    let credential_json: serde_json::Value = serde_json::to_value(&credential)?;
+    let cred_bytes = serde_json::to_vec(&credential_json)?;
     let digest = Sha256::digest(&cred_bytes); // 32 bytes
 
     // Convert into [u64; 4] (big-endian order)
