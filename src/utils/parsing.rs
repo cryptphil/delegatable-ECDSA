@@ -1,10 +1,10 @@
 //! Parsing and conversion utilities for cryptographic data.
 
-use anyhow::{Result, bail};
+use anyhow::{anyhow, bail, Result};
 use plonky2::field::extension::Extendable;
 use plonky2::field::types::{PrimeField, PrimeField64};
-use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::iop::target::BoolTarget;
+use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
 use plonky2_ecdsa::gadgets::biguint::WitnessBigUint;
 
@@ -96,4 +96,26 @@ where
         pw.set_bool_target(tgt, bit)?;
     }
     Ok(())
+}
+
+/// Given a JSON object and a field key, returns the start bit index and length (in bytes)
+/// of the serialized substring corresponding to `"key":value`.
+pub fn find_field_bit_indices(json: &serde_json::Value, field_key: &str) -> Result<(usize, usize)> {
+    let json_bytes = serde_json::to_vec(json)?;
+    let byte_str = String::from_utf8_lossy(&json_bytes);
+
+    // Parse JSON into Value to extract just that field
+    let field_val = json.get(field_key)
+        .ok_or_else(|| anyhow::anyhow!("Field {} not found", field_key))?;
+
+    // Reconstruct the substring like `"name":"Alice"`
+    let sub_json = format!("\"{}\":{}", field_key, field_val.to_string());
+
+    // Find its position in the serialized JSON
+    if let Some(byte_start) = byte_str.find(&sub_json) {
+        let bit_start = byte_start * 8;
+        Ok((bit_start, sub_json.len()))
+    } else {
+        Err(anyhow!("Substring '{}' not found in serialized JSON", sub_json))
+    }
 }

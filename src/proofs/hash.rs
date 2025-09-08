@@ -1,5 +1,6 @@
 use crate::cred::credential::CredentialData;
-use anyhow::{anyhow, Result};
+use crate::utils::parsing::find_field_bit_indices;
+use anyhow::Result;
 use plonky2::field::extension::Extendable;
 use plonky2::hash::hash_types::RichField;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
@@ -7,9 +8,7 @@ use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::CircuitConfig;
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use serde::Serialize;
 use sha2::{Digest, Sha256};
-
 
 /// Prove over a SHA256 message hash with optional selective disclosure of bytes of the preimage.
 ///
@@ -127,28 +126,6 @@ where
     println!("Recovered digest (hex): {}", hex::encode(digest_bytes));
 }
 
-fn find_field_bit_indices<T: Serialize>(cred: &T, field_key: &str) -> Result<(usize, usize)> {
-    // Full serialized credential
-    let cred_bytes = serde_json::to_vec(cred)?;
-    let cred_str = String::from_utf8_lossy(&cred_bytes);
-
-    // Parse JSON into Value to extract just that field
-    let value: serde_json::Value = serde_json::to_value(cred)?;
-    let field_val = value.get(field_key)
-        .ok_or_else(|| anyhow::anyhow!("Field {} not found", field_key))?;
-
-    // Reconstruct the substring like `"name":"Alice"`
-    let sub_json = format!("\"{}\":{}", field_key, field_val.to_string());
-
-    // Find its position in the serialized JSON
-    if let Some(byte_start) = cred_str.find(&sub_json) {
-        let bit_start = byte_start * 8;
-        Ok((bit_start, sub_json.len()))
-    } else {
-        Err(anyhow!("Substring '{}' not found in serialized JSON", sub_json))
-    }
-}
-
 #[test]
 fn test_sha256_proof_rev_name() -> Result<()> {
     const D: usize = 2;
@@ -164,11 +141,12 @@ fn test_sha256_proof_rev_name() -> Result<()> {
     };
 
     // Serialize the credential.
-    let cred_bytes = serde_json::to_vec(&credential)?;
+    let credential_json: serde_json::Value = serde_json::to_value(&credential)?;
+    let cred_bytes = serde_json::to_vec(&credential_json)?;
     let msg_bits = plonky2_sha256::circuit::array_to_bits(&cred_bytes);
 
     // Get the index and length of the "name" field in bits.
-    let (rev_idx, rev_num_bytes) = find_field_bit_indices(&credential, "name")?;
+    let (rev_idx, rev_num_bytes) = find_field_bit_indices(&credential_json, "name")?;
     println!("Revealing 'name' field bits: {} to {}", rev_idx, rev_num_bytes);
 
     // Compute SHA256 digest of the full credential.

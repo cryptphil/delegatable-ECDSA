@@ -34,7 +34,28 @@ pub struct ECDSACircuitTargets<C: Curve, P: PrimeField> {
 }
 
 
-pub fn build_ecdsa_circuit<F, Cfg, const D: usize>() -> ECDSACircuit<F, Cfg, D>
+/// Create a proof of knowledge of an ECDSA signature over secp256k1 as given in the signed credential.
+pub fn make_ecdsa_proof<F, Cfg, const D: usize>(
+    cred: &SignedECDSACredential,
+    // rev_attr: &str,
+    iss_pk: &ECDSAPublicKey<Secp256K1>,
+) -> Result<(VerifierCircuitData<F, Cfg, D>, ProofWithPublicInputs<F, Cfg, D>)>
+where
+    F: RichField + Extendable<D>,
+    Cfg: GenericConfig<D, F=F>,
+{
+    let build_start = Instant::now();
+    let circuit = build_ecdsa_circuit::<F, Cfg, D>();
+    println!("ECDSA circuit generation time: {:?}", build_start.elapsed());
+    let prove_start = Instant::now();
+    let proof = prove_ecdsa(&circuit, cred, iss_pk)?;
+    println!("ECDSA proof generation time: {:?}", prove_start.elapsed());
+    circuit.data.verify(proof.clone())?;
+    Ok((circuit.data.verifier_data(), proof))
+}
+
+/// Build a circuit that verifies an ECDSA signature over secp256k1.
+fn build_ecdsa_circuit<F, Cfg, const D: usize>() -> ECDSACircuit<F, Cfg, D>
 where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F = F>,
@@ -67,8 +88,11 @@ where
     ECDSACircuit { data, targets }
 }
 
-
-pub fn prove_ecdsa<F, Cfg, const D: usize>(
+/// Create a proof of knowledge of an ECDSA signature over secp256k1.
+///
+/// `cred`: The signed credential containing the credential data, signature, and the message hash.
+/// `iss_pk`: The issuer's public key to verify the signature against.
+fn prove_ecdsa<F, Cfg, const D: usize>(
     circuit: &ECDSACircuit<F, Cfg, D>,
     cred: &SignedECDSACredential,
     iss_pk: &ECDSAPublicKey<Secp256K1>,
@@ -93,60 +117,4 @@ where
 }
 
 
-pub fn make_ecdsa_proof<F, Cfg, const D: usize>(
-    cred: &SignedECDSACredential,
-    iss_pk: &ECDSAPublicKey<Secp256K1>,
-) -> Result<(VerifierCircuitData<F, Cfg, D>, ProofWithPublicInputs<F, Cfg, D>)>
-where
-    F: RichField + Extendable<D>,
-    Cfg: GenericConfig<D, F = F>,
-{
-    let build_start = Instant::now();
-    let circuit = build_ecdsa_circuit::<F, Cfg, D>();
-    println!("ECDSA circuit generation time: {:?}", build_start.elapsed());
-    let prove_start = Instant::now();
-    let proof = prove_ecdsa(&circuit, cred, iss_pk)?;
-    println!("ECDSA proof generation time: {:?}", prove_start.elapsed());
-    circuit.data.verify(proof.clone())?;
-    Ok((circuit.data.verifier_data(), proof))
-}
 
-
-// /// Create a proof of knowledge of an ECDSA signature over secp256k1.
-// pub fn make_ecdsa_proof<F, C, const D: usize>(
-//     cred: &IssuedEcdsaCredential,
-//     iss_pk: &ECDSAPublicKey<Secp256K1>,
-// ) -> Result<(VerifierCircuitData<F, C, D>, ProofWithPublicInputs<F, C, D>)>
-// where
-//     F: RichField + Extendable<D>,
-//     C: GenericConfig<D, F = F>,
-// {
-//     type Curve = Secp256K1;
-//
-//     let config = CircuitConfig::standard_ecc_config();
-//     let pw = PartialWitness::new();
-//     let mut builder = CircuitBuilder::<F, D>::new(config);
-//
-//     // Message = credential hash (Secp256K1Scalar)
-//     let msg_target = builder.constant_nonnative(cred.cred_hash);
-//
-//     // Public key
-//     let pk_target = ECDSAPublicKeyTarget(builder.constant_affine_point(iss_pk.0));
-//
-//     // Signature (r, s)
-//     let r_target = builder.constant_nonnative(cred.signature.r);
-//     let s_target = builder.constant_nonnative(cred.signature.s);
-//     let sig_target = ECDSASignatureTarget { r: r_target, s: s_target };
-//
-//     // Verify inside circuit
-//     let build_start = Instant::now();
-//     verify_secp256k1_message_circuit(&mut builder, msg_target, sig_target, pk_target);
-//     let data = builder.build::<C>();
-//     println!("Circuit generation time: {:?}", build_start.elapsed());
-//
-//     let prove_start = Instant::now();
-//     let proof = data.prove(pw)?;
-//     println!("Proof generation time: {:?}", prove_start.elapsed());
-//     data.verify(proof.clone())?;
-//     Ok((data.verifier_data(), proof))
-// }
