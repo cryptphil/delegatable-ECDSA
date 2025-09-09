@@ -66,7 +66,7 @@ where
     assert!(rev_num_bytes <= msg_len_bits / 8, "rev_num_bytes out of bounds");
     assert!(rev_idx + rev_num_bytes * 8 <= msg_len_bits, "reveal range exceeds message");
 
-    let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+    let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_zk_config());
     let targets = plonky2_sha256::circuit::make_circuits(&mut builder, msg_len_bits as u64);
 
     // Register revealed bytes as public inputs (if any).
