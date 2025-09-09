@@ -104,12 +104,19 @@ where
 pub fn hash_to_scalar(msg: &[u8]) -> Result<Secp256K1Scalar> {
     let digest = Sha256::digest(msg); // 32 bytes
 
-    // Convert into [u64; 4] (big-endian order)
-    let mut limbs = [0u64; 4];
-    for (i, chunk) in digest.chunks_exact(8).enumerate() {
-        limbs[i] = u64::from_be_bytes(chunk.try_into()?);
+    byte_array_to_scalar(digest.as_slice())
+}
+
+pub fn byte_array_to_scalar(bytes: &[u8]) -> Result<Secp256K1Scalar> {
+    if bytes.len() != 32 {
+        return Err(anyhow!("Expected 32 bytes for Secp256K1Scalar"));
     }
 
+    let mut limbs = [0u64; 4];
+    for (i, chunk) in bytes.chunks_exact(8).enumerate() {
+        limbs[i] = u64::from_be_bytes(chunk.try_into()?);
+    }
+    
     Ok(Secp256K1Scalar(limbs))
 }
 
