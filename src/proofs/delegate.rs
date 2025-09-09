@@ -1,5 +1,5 @@
-use crate::cred::credential::SignedECDSACredential;
-use crate::proofs::ecdsa::make_ecdsa_proof;
+use crate::cred::delegated_credential::DelegatedCredential;
+use crate::proofs::ecdsa::gen_ecdsa_proof;
 use anyhow::Result;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
@@ -13,10 +13,10 @@ use plonky2::hash::hash_types::RichField;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 
 #[allow(dead_code)]
-pub fn prove_delegation_step<F, C, const D: usize>(
+pub fn gen_delegation_proof<F, C, const D: usize>(
     verifier_data: &VerifierCircuitData<F, C, D>,
     inner_proof:   &ProofWithPublicInputs<F, C, D>,
-    cred: &SignedECDSACredential,
+    cred: &DelegatedCredential,
 ) -> Result<(VerifierCircuitData<F, C, D>, ProofWithPublicInputs<F, C, D>)>
 where
     F: RichField + Extendable<D>,
@@ -50,11 +50,11 @@ where
 
     let rec_start = Instant::now();
     let proof_recursive = data.prove(pw)?;
-    println!("Recursive proof generation time (layer {}): {:?}", cred.credential.delegation_level, rec_start.elapsed());
+    println!("Recursive proof generation time (layer {}): {:?}", cred.delegation_level, rec_start.elapsed());
 
     // Optional local verification of the newly created layer
     data.verify(proof_recursive.clone())?;
-    println!("Recursive proof (layer {}) passed!", cred.credential.delegation_level);
+    println!("Recursive proof (layer {}) passed!", cred.delegation_level);
 
     // Recurse to add remaining layers
     Ok((verifier_data.clone(), inner_proof.clone()))
