@@ -9,8 +9,8 @@ use plonky2_ecdsa::curve::curve_types::{Curve, CurveScalar};
 use plonky2_ecdsa::curve::ecdsa::{sign_message, verify_message, ECDSAPublicKey, ECDSASecretKey, ECDSASignature};
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 
+use crate::utils::parsing::hash_to_scalar;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 #[derive(Serialize, Deserialize)]
 pub struct CredentialData {
@@ -36,6 +36,19 @@ pub struct IssuerKeypair {
     pub pk: ECDSAPublicKey<Secp256K1>,
 }
 
+impl CredentialData {
+    pub fn to_json(&self) -> Result<serde_json::Value> {
+        let credential_json: serde_json::Value = serde_json::to_value(self)?;
+        Ok(credential_json)
+    }
+
+    pub fn to_json_bytes(&self) -> Result<Vec<u8>> {
+        let credential_json: serde_json::Value = serde_json::to_value(self)?;
+        let cred_bytes = serde_json::to_vec(&credential_json)?;
+        Ok(cred_bytes)
+    }
+}
+
 /// Generate issuer keypair: (secret, public)
 pub fn generate_issuer_keypair() -> IssuerKeypair {
     let sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
@@ -59,7 +72,8 @@ pub fn issue_fixed_dummy_credential(
         birthdate: "1990-01-01".to_string(),
     };
 
-    let cred_hash = hash_credential_to_scalar(&cred_data)?;
+    let cred_json = cred_data.to_json_bytes()?;
+    let cred_hash = hash_to_scalar(&cred_json)?;
     let signature = sign_message(cred_hash, *issuer_sk);
 
     Ok(SignedECDSACredential {
@@ -99,7 +113,8 @@ pub fn issue_credential(
         birthdate,
     };
 
-    let cred_hash = hash_credential_to_scalar(&credential)?;
+    let cred_json = credential.to_json_bytes()?;
+    let cred_hash = hash_to_scalar(&cred_json)?;
     let signature = sign_message(cred_hash, *issuer_sk);
 
     Ok(SignedECDSACredential {
@@ -126,7 +141,8 @@ pub fn delegate_credential(base_credential: &SignedECDSACredential) -> Result<Si
         birthdate: base_credential.credential.birthdate.clone(),
     };
 
-    let cred_hash = hash_credential_to_scalar(&credential)?;
+    let cred_json = credential.to_json_bytes()?;
+    let cred_hash = hash_to_scalar(&cred_json)?;
     let signature = sign_message(cred_hash, base_credential.cred_sk);
 
     Ok(SignedECDSACredential {
@@ -165,19 +181,6 @@ pub(crate) fn compressed_pubkey_hex(pk: &ECDSAPublicKey<Secp256K1>) -> String {
     hex::encode(compressed)
 }
 
-fn hash_credential_to_scalar(credential: &CredentialData) -> Result<Secp256K1Scalar> {
-    let credential_json: serde_json::Value = serde_json::to_value(&credential)?;
-    let cred_bytes = serde_json::to_vec(&credential_json)?;
-    let digest = Sha256::digest(&cred_bytes); // 32 bytes
-
-    // Convert into [u64; 4] (big-endian order)
-    let mut limbs = [0u64; 4];
-    for (i, chunk) in digest.chunks_exact(8).enumerate() {
-        limbs[i] = u64::from_be_bytes(chunk.try_into()?);
-    }
-
-    Ok(Secp256K1Scalar(limbs))
-}
 
 #[test]
 fn test_issue_credential_fixed() -> Result<()> {

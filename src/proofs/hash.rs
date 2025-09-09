@@ -141,12 +141,12 @@ fn test_sha256_proof_rev_name() -> Result<()> {
     };
 
     // Serialize the credential.
-    let credential_json: serde_json::Value = serde_json::to_value(&credential)?;
-    let cred_bytes = serde_json::to_vec(&credential_json)?;
+    let cred_json = credential.to_json()?;
+    let cred_bytes = credential.to_json_bytes()?;
     let msg_bits = plonky2_sha256::circuit::array_to_bits(&cred_bytes);
 
     // Get the index and length of the "name" field in bits.
-    let (rev_idx, rev_num_bytes) = find_field_bit_indices(&credential_json, "name")?;
+    let (rev_idx, rev_num_bytes) = find_field_bit_indices(&cred_json, "name")?;
     println!("Revealing 'name' field bits: {} to {}", rev_idx, rev_num_bytes);
 
     // Compute SHA256 digest of the full credential.

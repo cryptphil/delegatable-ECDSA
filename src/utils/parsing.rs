@@ -2,11 +2,13 @@
 
 use anyhow::{anyhow, bail, Result};
 use plonky2::field::extension::Extendable;
+use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
 use plonky2::field::types::{PrimeField, PrimeField64};
 use plonky2::iop::target::BoolTarget;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
 use plonky2_ecdsa::gadgets::biguint::WitnessBigUint;
+use sha2::{Digest, Sha256};
 
 const D: usize = 2;
 type Cfg = PoseidonGoldilocksConfig;
@@ -96,6 +98,19 @@ where
         pw.set_bool_target(tgt, bit)?;
     }
     Ok(())
+}
+
+/// Hash a byte array with SHA256 and convert the 32-byte digest into a Secp256K1Scalar.
+pub fn hash_to_scalar(msg: &[u8]) -> Result<Secp256K1Scalar> {
+    let digest = Sha256::digest(msg); // 32 bytes
+
+    // Convert into [u64; 4] (big-endian order)
+    let mut limbs = [0u64; 4];
+    for (i, chunk) in digest.chunks_exact(8).enumerate() {
+        limbs[i] = u64::from_be_bytes(chunk.try_into()?);
+    }
+
+    Ok(Secp256K1Scalar(limbs))
 }
 
 /// Given a JSON object and a field key, returns the start bit index and length (in bytes)
