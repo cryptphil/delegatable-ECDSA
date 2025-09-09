@@ -1,5 +1,5 @@
 use crate::cred::credential::CredentialData;
-use crate::utils::parsing::find_field_bit_indices;
+use crate::utils::parsing::{bits_to_hex, bits_to_string, find_field_bit_indices};
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
 use plonky2::hash::hash_types::RichField;
@@ -94,36 +94,13 @@ where
         .map(|f| f.to_canonical_u64() != 0) // field -> bool
         .collect();
 
-    let rev_bytes: Vec<u8> = bits.chunks(8)
-        .take(rev_num_bytes)
-        .map(|chunk| {
-            let mut val = 0u8;
-            for (i, bit) in chunk.iter().enumerate() {
-                if *bit {
-                    val |= 1 << (7 - i); // MSB first
-                }
-            }
-            val
-        })
-        .collect();
-
-    let rev_str = String::from_utf8_lossy(&rev_bytes);
+    let rev_str = bits_to_string(&bits[..rev_num_bytes * 8]);
     println!("Recovered public input: {}", rev_str);
 
     // Digest is next 256 bits
     let digest_bits = &bits[rev_num_bytes * 8..rev_num_bytes * 8 + 256];
-    let mut digest_bytes = vec![0u8; 32];
-
-    for (i, chunk) in digest_bits.chunks(8).enumerate() {
-        let mut val = 0u8;
-        for (j, bit) in chunk.iter().enumerate() {
-            if *bit {
-                val |= 1 << (7 - j);
-            }
-        }
-        digest_bytes[i] = val;
-    }
-    println!("Recovered digest (hex): {}", hex::encode(digest_bytes));
+    let digest_hex = bits_to_hex(digest_bits);
+    println!("Recovered digest (hex): {}", digest_hex);
 }
 
 #[test]

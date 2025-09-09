@@ -113,6 +113,32 @@ pub fn hash_to_scalar(msg: &[u8]) -> Result<Secp256K1Scalar> {
     Ok(Secp256K1Scalar(limbs))
 }
 
+/// Convert a bit vector (MSB-first per byte) into a UTF-8 string.
+pub fn bits_to_string(bits: &[bool]) -> String {
+    let bytes = take_bytes(bits);
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+/// Convert a bit vector (MSB-first per byte) into a hex string.
+pub fn bits_to_hex(bits: &[bool]) -> String {
+    let bytes = take_bytes(bits);
+    hex::encode(bytes)
+}
+
+
+/// Convert a bit vector (MSB-first per byte) into a byte vector.
+fn take_bytes(bits: &[bool]) -> Vec<u8> {
+    bits.chunks(8).map(|chunk| {
+        let mut val = 0u8;
+        for (i, bit) in chunk.iter().enumerate() {
+            if *bit {
+                val |= 1 << (7 - i); // MSB first
+            }
+        }
+        val
+    }).collect()
+}
+
 /// Given a JSON object and a field key, returns the start bit index and length (in bytes)
 /// of the serialized substring corresponding to `"key":value`.
 pub fn find_field_bit_indices(json: &serde_json::Value, field_key: &str) -> Result<(usize, usize)> {
