@@ -35,7 +35,7 @@ pub struct ECDSACircuitTargets<C: Curve, P: PrimeField> {
 
 
 /// Create a proof of knowledge of an ECDSA signature over secp256k1 as given in the signed credential.
-pub fn make_ecdsa_proof<F, Cfg, const D: usize>(
+pub fn gen_ecdsa_proof<F, Cfg, const D: usize>(
     cred: &SignedECDSACredential,
     // rev_attr: &str,
     iss_pk: &ECDSAPublicKey<Secp256K1>,

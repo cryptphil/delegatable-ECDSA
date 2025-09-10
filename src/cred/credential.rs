@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct CredentialData {
     pub cred_pk_sec1_compressed: String,
-    pub delegation_level: u8,
     pub name: String,
     pub address: String,
     pub birthdate: String,
@@ -23,7 +22,7 @@ pub struct CredentialData {
 
 #[derive(Serialize, Deserialize)]
 pub struct SignedECDSACredential {
-    pub credential: CredentialData,
+    pub data: CredentialData,
     pub cred_hash: Secp256K1Scalar,
     pub cred_sk: ECDSASecretKey<Secp256K1>,
     pub cred_pk: ECDSAPublicKey<Secp256K1>,
@@ -66,7 +65,6 @@ pub fn issue_fixed_dummy_credential(
 
     let cred_data = CredentialData {
         cred_pk_sec1_compressed: compressed_pubkey_hex(&cred_pk),
-        delegation_level: 0,
         name: "Dax Dustermann".to_string(),
         address: "Karolinenplatz 5, 64289 Darmstadt".to_string(),
         birthdate: "1990-01-01".to_string(),
@@ -77,7 +75,7 @@ pub fn issue_fixed_dummy_credential(
     let signature = sign_message(cred_hash, *issuer_sk);
 
     Ok(SignedECDSACredential {
-        credential: cred_data,
+        data: cred_data,
         cred_hash,
         cred_sk,
         cred_pk,
@@ -96,7 +94,6 @@ pub fn generate_fixed_issuer_keypair() -> IssuerKeypair {
 /// Issue a credential with its own keypair and user-provided attributes, signed by issuer_sk.
 pub fn issue_credential(
     issuer_sk: &ECDSASecretKey<Secp256K1>,
-    delegation_level: u8,
     name: String,
     address: String,
     birthdate: String,
@@ -107,7 +104,6 @@ pub fn issue_credential(
 
     let credential = CredentialData {
         cred_pk_sec1_compressed: compressed_pubkey_hex(&cred_pk),
-        delegation_level,
         name,
         address,
         birthdate,
@@ -118,42 +114,13 @@ pub fn issue_credential(
     let signature = sign_message(cred_hash, *issuer_sk);
 
     Ok(SignedECDSACredential {
-        credential,
+        data: credential,
         cred_hash,
         cred_sk,
         cred_pk,
         signature,
     })
 }
-// Derive a delegated credential from a base credential
-pub fn delegate_credential(base_credential: &SignedECDSACredential) -> Result<SignedECDSACredential> {
-    let next_cred_sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
-    let next_cred_pk =
-        ECDSAPublicKey((CurveScalar(next_cred_sk.0) * Curve::GENERATOR_PROJECTIVE).to_affine());
-
-    let next_delegation_level = base_credential.credential.delegation_level + 1;
-
-    let credential = CredentialData {
-        cred_pk_sec1_compressed: compressed_pubkey_hex(&next_cred_pk),
-        delegation_level: next_delegation_level,
-        name: base_credential.credential.name.clone(),
-        address: base_credential.credential.address.clone(),
-        birthdate: base_credential.credential.birthdate.clone(),
-    };
-
-    let cred_json = credential.to_json_bytes()?;
-    let cred_hash = hash_to_scalar(&cred_json)?;
-    let signature = sign_message(cred_hash, base_credential.cred_sk);
-
-    Ok(SignedECDSACredential {
-        credential,
-        cred_hash,
-        cred_sk: next_cred_sk,
-        cred_pk: next_cred_pk,
-        signature,
-    })
-}
-
 
 pub(crate) fn compressed_pubkey_hex(pk: &ECDSAPublicKey<Secp256K1>) -> String {
     let point: AffinePoint<Secp256K1> = pk.0.clone();
@@ -181,7 +148,6 @@ pub(crate) fn compressed_pubkey_hex(pk: &ECDSAPublicKey<Secp256K1>) -> String {
     hex::encode(compressed)
 }
 
-
 #[test]
 fn test_issue_credential_fixed() -> Result<()> {
     // Produce issuer keys and an issued credential + signature
@@ -192,7 +158,7 @@ fn test_issue_credential_fixed() -> Result<()> {
     println!("Issuer PK (compressed): {}", compressed_pubkey_hex(&kp.pk));
     println!(
         "Credential JSON: {}",
-        serde_json::to_string_pretty(&issued.credential)?
+        serde_json::to_string_pretty(&issued.data)?
     );
 
     // Verify using Plonky2 ECDSA primitives over secp256k1
@@ -206,13 +172,13 @@ fn test_issue_credential_fixed() -> Result<()> {
 fn test_issue_credential_random() -> Result<()> {
     // Produce issuer keys and an issued credential + signature
     let kp = generate_issuer_keypair();
-    let issued = issue_credential(&kp.sk, 0, "Bernd the Bread".to_string(), "Mürbeweg 3".to_string(), "too old".to_string())?;
+    let issued = issue_credential(&kp.sk, "Bernd the Bread".to_string(), "Mürbeweg 3".to_string(), "too old".to_string())?;
 
     // Pretty-print some basics
     println!("Issuer PK (compressed): {}", compressed_pubkey_hex(&kp.pk));
     println!(
         "Credential JSON: {}",
-        serde_json::to_string_pretty(&issued.credential)?
+        serde_json::to_string_pretty(&issued.data)?
     );
 
     // Verify using Plonky2 ECDSA primitives over secp256k1
@@ -221,18 +187,3 @@ fn test_issue_credential_random() -> Result<()> {
 
     Ok(())
 }
-
-#[test]
-fn test_delegate_credential() -> Result<()> {
-    let kp = generate_fixed_issuer_keypair();
-    let issued = issue_fixed_dummy_credential(&kp.sk)?;
-    let delegated = delegate_credential(&issued)?;
-    println!("Delegated credential JSON: {}", serde_json::to_string_pretty(&delegated.credential)?);
-
-    let is_valid = verify_message(delegated.cred_hash, delegated.signature, issued.cred_pk);
-    assert!(is_valid, "issuer signature should verify");
-
-    Ok(())
-}
-
-
