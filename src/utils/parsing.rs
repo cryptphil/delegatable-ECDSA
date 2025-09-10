@@ -2,11 +2,13 @@
 
 use anyhow::{anyhow, bail, Result};
 use plonky2::field::extension::Extendable;
+use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
 use plonky2::field::types::{PrimeField, PrimeField64};
 use plonky2::iop::target::BoolTarget;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
 use plonky2_ecdsa::gadgets::biguint::WitnessBigUint;
+use sha2::{Digest, Sha256};
 
 const D: usize = 2;
 type Cfg = PoseidonGoldilocksConfig;
@@ -96,6 +98,52 @@ where
         pw.set_bool_target(tgt, bit)?;
     }
     Ok(())
+}
+
+/// Hash a byte array with SHA256 and convert the 32-byte digest into a Secp256K1Scalar.
+pub fn hash_to_scalar(msg: &[u8]) -> Result<Secp256K1Scalar> {
+    let digest = Sha256::digest(msg); // 32 bytes
+
+    byte_array_to_scalar(digest.as_slice())
+}
+
+pub fn byte_array_to_scalar(bytes: &[u8]) -> Result<Secp256K1Scalar> {
+    if bytes.len() != 32 {
+        return Err(anyhow!("Expected 32 bytes for Secp256K1Scalar"));
+    }
+
+    let mut limbs = [0u64; 4];
+    for (i, chunk) in bytes.chunks_exact(8).enumerate() {
+        limbs[i] = u64::from_be_bytes(chunk.try_into()?);
+    }
+    
+    Ok(Secp256K1Scalar(limbs))
+}
+
+/// Convert a bit vector (MSB-first per byte) into a UTF-8 string.
+pub fn bits_to_string(bits: &[bool]) -> String {
+    let bytes = take_bytes(bits);
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+/// Convert a bit vector (MSB-first per byte) into a hex string.
+pub fn bits_to_hex(bits: &[bool]) -> String {
+    let bytes = take_bytes(bits);
+    hex::encode(bytes)
+}
+
+
+/// Convert a bit vector (MSB-first per byte) into a byte vector.
+fn take_bytes(bits: &[bool]) -> Vec<u8> {
+    bits.chunks(8).map(|chunk| {
+        let mut val = 0u8;
+        for (i, bit) in chunk.iter().enumerate() {
+            if *bit {
+                val |= 1 << (7 - i); // MSB first
+            }
+        }
+        val
+    }).collect()
 }
 
 /// Given a JSON object and a field key, returns the start bit index and length (in bytes)

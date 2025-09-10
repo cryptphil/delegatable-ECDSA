@@ -60,7 +60,8 @@ where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F = F>,
 {
-    let config = CircuitConfig::standard_ecc_config();
+    let mut config = CircuitConfig::standard_ecc_config();
+    config.zero_knowledge = true;
     let mut builder = CircuitBuilder::<F, D>::new(config);
 
     // Allocate *targets* instead of constants
