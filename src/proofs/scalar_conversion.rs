@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 ///
 /// `digest_bits`: slice of 256 boolean targets (MSB first)
 /// Returns: the scalar target
-fn build_sha256_to_scalar_circuit<F: RichField + Extendable<D>, const D: usize>(
+pub fn build_sha256_to_scalar_circuit<F: RichField + Extendable<D>, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
     digest_bits: &[BoolTarget],
 ) -> NonNativeTarget<Secp256K1Scalar> {

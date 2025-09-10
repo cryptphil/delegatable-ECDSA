@@ -12,7 +12,7 @@ use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use crate::utils::parsing::hash_to_scalar;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CredentialData {
     pub cred_pk_sec1_compressed: String,
     pub name: String,

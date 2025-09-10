@@ -162,7 +162,6 @@ fn test_sha256_proof_rev_name() -> Result<()> {
 
     let credential = CredentialData {
         cred_pk_sec1_compressed: "".to_string(),
-        delegation_level: 0,
         name: "Alice".to_string(),
         address: "Musterstraße".to_string(),
         birthdate: "01.01.1999".to_string(),

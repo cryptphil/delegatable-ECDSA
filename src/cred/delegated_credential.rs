@@ -8,9 +8,10 @@ use plonky2_ecdsa::curve::curve_types::{Curve, CurveScalar};
 use plonky2_ecdsa::curve::ecdsa::{ECDSAPublicKey, ECDSASecretKey};
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use serde::{Deserialize, Serialize};
-use crate::cred::credential::{compressed_pubkey_hex, hash_credential_to_scalar, CredentialData, SignedECDSACredential};
+use crate::cred::credential::{compressed_pubkey_hex, CredentialData, SignedECDSACredential};
 use crate::proofs::delegate::gen_delegation_proof;
 use crate::proofs::ecdsa::gen_ecdsa_proof;
+use crate::utils::parsing::hash_to_scalar;
 
 // We fix the generics here for simplicity.
 const D: usize = 2;
@@ -21,54 +22,49 @@ pub struct DelegatedCredential {
     pub verifier_data: VerifierCircuitData<F, C, D>,
     pub cred_sk: ECDSASecretKey<Secp256K1>, // Part of proof (private input)
     pub cred_pk: ECDSAPublicKey<Secp256K1>, // Part of proof (public input)
-    pub attributes: DelegatedCredentialData, // For now no subset functionality
-    pub attr_commitment: Secp256K1Scalar, // Part of proof (public input)
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct DelegatedCredentialData {
-    pub cred_pk_sec1_compressed: String,
+    pub attributes: CredentialData, // For now no subset functionality
     pub delegation_level: u8, // Part of proof (public input)
-    pub subset: CredentialData // todo: add subset functionality
+    pub attr_commitment: Secp256K1Scalar, // Part of proof (public input)
 }
 
 // Derive a delegated credential from a base credential
 pub fn initial_delegation(base_credential: &SignedECDSACredential, issuer_pk: &ECDSAPublicKey<Secp256K1>) -> anyhow::Result<DelegatedCredential> {
-    // 1. Prove that base_credential is valid.
+    // 1. Prove that base_credential is valid. Note that init_proof holds the public inputs of the proof i.e. the issuer public key
     let (init_verifier_data, init_proof) = gen_ecdsa_proof(base_credential, issuer_pk)?;
 
-    // 2. Generate delegated version of the base credential
+    // 2. Prepare delegated version of the base credential
     let next_cred_sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
     let next_cred_pk =
         ECDSAPublicKey((CurveScalar(next_cred_sk.0) * Curve::GENERATOR_PROJECTIVE).to_affine());
 
-    let credential_data = CredentialData {
+    let delegated_credential_data = CredentialData {
         cred_pk_sec1_compressed: compressed_pubkey_hex(&next_cred_pk),
         name: base_credential.data.name.clone(),
         address: base_credential.data.address.clone(),
         birthdate: base_credential.data.birthdate.clone(),
     };
 
-    let attribute_commitment = hash_credential_to_scalar(&credential_data)?;
+    let cred_json = delegated_credential_data.to_json_bytes()?;
+    let cred_hash = hash_to_scalar(&cred_json)?;
 
+    // 3. Generate proof of delegation for new credential data
+    let (verifier_data, proof) = gen_delegation_proof(&init_verifier_data, &init_proof, &delegated_credential_data, 1, &cred_hash, &next_cred_sk, &next_cred_pk, issuer_pk)?;
+
+    // 4. Construct delegated credential type
     let delegated_credential = DelegatedCredential {
-        proof: init_proof,
-        verifier_data: init_verifier_data,
-        delegation_level: 1,
+        proof,
+        verifier_data,
         cred_sk: next_cred_sk,
         cred_pk: next_cred_pk,
-        attr_commitment: attribute_commitment,
-        attributes: credential_data,
-    }
+        attributes: delegated_credential_data,
+        delegation_level: 1, // First level
+        attr_commitment: cred_hash
+    };
 
-    // 3.
-    gen_delegation_proof(init_verifier_data, init_proof, delegated_credential)
-
-
-
-    Ok()
+    Ok(delegated_credential)
 }
 
+/*
 pub fn subsequent_delegation(prev_credential: &DelegatedCredential) -> anyhow::Result<DelegatedCredential> {
     let next_cred_sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
     let next_cred_pk =
@@ -92,3 +88,5 @@ pub fn subsequent_delegation(prev_credential: &DelegatedCredential) -> anyhow::R
         attributes: credential_data,
     })
 }
+
+ */

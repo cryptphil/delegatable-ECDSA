@@ -19,7 +19,6 @@ use plonky2_ecdsa::gadgets::ecdsa::{verify_secp256k1_message_circuit, ECDSAPubli
 use plonky2_ecdsa::gadgets::nonnative::{CircuitBuilderNonNative, NonNativeTarget};
 use std::time::Instant;
 
-
 #[allow(dead_code)]
 pub struct ECDSACircuit<F: RichField + Extendable<D>, Cfg: GenericConfig<D, F = F>, const D: usize> {
     pub data: CircuitData<F, Cfg, D>,
@@ -54,7 +53,6 @@ where
     Ok((circuit.data.verifier_data(), proof))
 }
 
-/// Build a circuit that verifies an ECDSA signature over secp256k1.
 fn build_ecdsa_circuit<F, Cfg, const D: usize>() -> ECDSACircuit<F, Cfg, D>
 where
     F: RichField + Extendable<D>,
@@ -64,35 +62,48 @@ where
     config.zero_knowledge = true;
     let mut builder = CircuitBuilder::<F, D>::new(config);
 
-    // Allocate *targets* instead of constants
-    let msg_target = builder.add_virtual_nonnative_target();
-    let r_target = builder.add_virtual_nonnative_target();
-    let s_target = builder.add_virtual_nonnative_target();
-    let pk_target = ECDSAPublicKeyTarget(builder.add_virtual_affine_point_target());
+    // Allocate targets
+    let msg_target = builder.add_virtual_nonnative_target(); // message = cred_hash (secp256k1 scalar)
+    let r_target   = builder.add_virtual_nonnative_target();
+    let s_target   = builder.add_virtual_nonnative_target();
+    let pk_issuer  = ECDSAPublicKeyTarget(builder.add_virtual_affine_point_target());
     let sig_target = ECDSASignatureTarget { r: r_target, s: s_target };
 
-    // Register the issuer public key as public input.
-    // TODO: Pretty print the issuer's public key at some later point.
-    for limb in pk_target.0.x.value.limbs.iter().chain(pk_target.0.y.value.limbs.iter()) {
+    // --- Public inputs (order matters for recursion!) ---
+
+    // 1) issuer_pk limbs
+    for limb in pk_issuer.0.x.value.limbs.iter().chain(pk_issuer.0.y.value.limbs.iter()) {
         builder.register_public_input(limb.0);
     }
 
-    verify_secp256k1_message_circuit(&mut builder, msg_target.clone(), sig_target.clone(), pk_target.clone());
-    let data = builder.build::<Cfg>();
+    // 2) prev_pk limbs (dummy constant, to fix PI layout)
+    use plonky2_ecdsa::curve::secp256k1::Secp256K1;
+    let dummy_pk_t = builder.constant_affine_point(Secp256K1::GENERATOR_AFFINE);
+    for limb in dummy_pk_t.x.value.limbs.iter().chain(dummy_pk_t.y.value.limbs.iter()) {
+        builder.register_public_input(limb.0);
+    }
 
+    // 3) delegation_level (anchor == 0)
+    let del_level_anchor = builder.add_virtual_public_input();
+    builder.assert_zero(del_level_anchor); // == 0
+
+    // 4) cred_hash limbs (public) — also the ECDSA message
+    for limb in &msg_target.value.limbs {
+        builder.register_public_input(limb.0);
+    }
+
+    // ECDSA check over msg_target
+    verify_secp256k1_message_circuit(&mut builder, msg_target.clone(), sig_target.clone(), pk_issuer.clone());
+
+    let data = builder.build::<Cfg>();
     let targets = ECDSACircuitTargets {
-        pk_issuer: pk_target.0,
+        pk_issuer: pk_issuer.0,
         msg: msg_target,
         sig: sig_target,
     };
-
     ECDSACircuit { data, targets }
 }
 
-/// Create a proof of knowledge of an ECDSA signature over secp256k1.
-///
-/// `cred`: The signed credential containing the credential data, signature, and the message hash.
-/// `iss_pk`: The issuer's public key to verify the signature against.
 fn prove_ecdsa<F, Cfg, const D: usize>(
     circuit: &ECDSACircuit<F, Cfg, D>,
     cred: &SignedECDSACredential,
@@ -104,18 +115,19 @@ where
 {
     let mut pw = PartialWitness::new();
 
-    // Fill witness with concrete values
+    // msg = cred_hash, signature parts
+    // todo: hash in circuit
     set_nonnative_target(&mut pw, &circuit.targets.msg, cred.cred_hash)?;
     set_nonnative_target(&mut pw, &circuit.targets.sig.r, cred.signature.r)?;
     set_nonnative_target(&mut pw, &circuit.targets.sig.s, cred.signature.s)?;
+
+    // issuer_pk
     pw.set_biguint_target(&circuit.targets.pk_issuer.x.value, &iss_pk.0.x.to_canonical_biguint())?;
     pw.set_biguint_target(&circuit.targets.pk_issuer.y.value, &iss_pk.0.y.to_canonical_biguint())?;
 
-    // let mut timing = TimingTree::new("inner_proof", Level::Info);
-    // let proof = prove(&circuit.data.prover_only, &circuit.data.common, pw, &mut timing);
-    // proof
-    circuit.data.prove(pw)
+    // del_level == 0 enforced by constraint; no witness needed
+
+    let proof = circuit.data.prove(pw)?;
+    circuit.data.verify(proof.clone())?;
+    Ok(proof)
 }
-
-
-
