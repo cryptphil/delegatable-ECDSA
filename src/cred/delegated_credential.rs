@@ -7,6 +7,7 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2_ecdsa::curve::curve_types::{Curve, CurveScalar};
 use plonky2_ecdsa::curve::ecdsa::{ECDSAPublicKey, ECDSASecretKey};
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
+use serde::{Deserialize, Serialize};
 use crate::cred::credential::{compressed_pubkey_hex, hash_credential_to_scalar, CredentialData, SignedECDSACredential};
 use crate::proofs::delegate::gen_delegation_proof;
 use crate::proofs::ecdsa::gen_ecdsa_proof;
@@ -18,11 +19,17 @@ type F = <C as GenericConfig<D>>::F;
 pub struct DelegatedCredential {
     pub proof: ProofWithPublicInputs<F, C, D>,
     pub verifier_data: VerifierCircuitData<F, C, D>,
-    pub delegation_level: u8, // Part of proof (public input)
     pub cred_sk: ECDSASecretKey<Secp256K1>, // Part of proof (private input)
     pub cred_pk: ECDSAPublicKey<Secp256K1>, // Part of proof (public input)
+    pub attributes: DelegatedCredentialData, // For now no subset functionality
     pub attr_commitment: Secp256K1Scalar, // Part of proof (public input)
-    pub attributes: CredentialData // For now no subset functionality (private input)
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DelegatedCredentialData {
+    pub cred_pk_sec1_compressed: String,
+    pub delegation_level: u8, // Part of proof (public input)
+    pub subset: CredentialData // todo: add subset functionality
 }
 
 // Derive a delegated credential from a base credential
@@ -56,7 +63,7 @@ pub fn initial_delegation(base_credential: &SignedECDSACredential, issuer_pk: &E
 
     // 3.
     gen_delegation_proof(init_verifier_data, init_proof, delegated_credential)
-        
+
 
 
     Ok()

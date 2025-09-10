@@ -1,14 +1,15 @@
-use crate::cred::delegated_credential::DelegatedCredential;
+use crate::cred::delegated_credential::{DelegatedCredential, DelegatedCredentialData};
 use crate::proofs::ecdsa::gen_ecdsa_proof;
 use anyhow::Result;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData, VerifierCircuitTarget};
 use plonky2::plonk::config::{AlgebraicHasher, GenericConfig, PoseidonGoldilocksConfig};
-use plonky2_ecdsa::curve::ecdsa::ECDSAPublicKey;
+use plonky2_ecdsa::curve::ecdsa::{ECDSAPublicKey, ECDSASecretKey};
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use std::time::Instant;
 use plonky2::field::extension::Extendable;
+use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
 use plonky2::hash::hash_types::RichField;
 use plonky2::plonk::proof::ProofWithPublicInputs;
 
@@ -16,7 +17,10 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 pub fn gen_delegation_proof<F, C, const D: usize>(
     verifier_data: &VerifierCircuitData<F, C, D>,
     inner_proof:   &ProofWithPublicInputs<F, C, D>,
-    cred: &DelegatedCredential,
+    cred_data: &DelegatedCredentialData,
+    cred_data_commitment: Secp256K1Scalar,
+    cred_sk: ECDSASecretKey<Secp256K1>,
+    cred_pk: ECDSAPublicKey<Secp256K1>,
 ) -> Result<(VerifierCircuitData<F, C, D>, ProofWithPublicInputs<F, C, D>)>
 where
     F: RichField + Extendable<D>,
