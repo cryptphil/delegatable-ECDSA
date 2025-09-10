@@ -5,15 +5,14 @@ use plonky2::field::extension::Extendable;
 use plonky2::hash::hash_types::RichField;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
-use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData};
+use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2_sha256::circuit::Sha256Targets;
 use sha2::{Digest, Sha256};
 
 /// Container for the compiled SHA256 circuit and its relevant targets.
-pub struct Sha256Circuit<F: RichField + Extendable<D>, Cfg: GenericConfig<D, F=F>, const D: usize> {
-    pub data: CircuitData<F, Cfg, D>,
+pub struct Sha256Circuit {
     pub targets: Sha256Targets, // The message and digest targets.
     pub rev_idx: usize,        // The bit index where the revealed window section.
     pub rev_num_bytes: usize,  // Number of bytes revealed.
@@ -36,38 +35,44 @@ where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F=F>,
 {
+    let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_zk_config());
+    let mut pw = PartialWitness::new();
+
+    let circuit = make_sha256_circuit::<F, D>(&mut builder, msg_bits.len(), rev_idx, rev_num_bytes);
+
     let build_start = std::time::Instant::now();
-    let circuit = build_sha256_circuit::<F, Cfg, D>(msg_bits.len(), rev_idx, rev_num_bytes);
+    let data = builder.build::<Cfg>();
     println!("SHA256 circuit generation time: {:?}", build_start.elapsed());
 
+    fill_sha256_circuit_witness::<F, Cfg, D>(&circuit, &mut pw, msg_bits, digest_bits)?;
+
     let prove_start = std::time::Instant::now();
-    let proof = prove_sha256_with_circuit(&circuit, msg_bits, digest_bits)?;
+    let proof = data.prove(pw)?;
     println!("SHA256 proof generation time: {:?}", prove_start.elapsed());
 
-    Ok((circuit.data.verifier_data(), proof))
+    Ok((data.verifier_data(), proof))
 }
 
 
-/// Build the SHA-256 circuit for a message of `msg_len_bits` bits and a fixed reveal section.
+/// Add the SHA-256 circuit constrains for a message of `msg_len_bits` bits and a fixed reveal section.
 ///
 /// - `rev_idx` is a bit index (0-based) where the revealed section start.
 /// - `rev_num_bytes` is how many bytes to reveal starting from the rev_idx (0 == reveal nothing).
-fn build_sha256_circuit<F, Cfg, const D: usize>(
+fn make_sha256_circuit<F, const D: usize>(
+    builder: &mut CircuitBuilder<F, D>,
     msg_len_bits: usize,
     rev_idx: usize,
     rev_num_bytes: usize,
-) -> Sha256Circuit<F, Cfg, D>
+) -> Sha256Circuit
 where
     F: RichField + Extendable<D>,
-    Cfg: GenericConfig<D, F=F>,
 {
     assert_eq!(msg_len_bits % 8, 0, "message length must be whole bytes (bits multiple of 8)");
     assert!(rev_idx <= msg_len_bits, "rev_idx out of bounds");
     assert!(rev_num_bytes <= msg_len_bits / 8, "rev_num_bytes out of bounds");
     assert!(rev_idx + rev_num_bytes * 8 <= msg_len_bits, "reveal range exceeds message");
 
-    let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_zk_config());
-    let targets = plonky2_sha256::circuit::make_circuits(&mut builder, msg_len_bits as u64);
+    let targets = plonky2_sha256::circuit::make_circuits(builder, msg_len_bits as u64);
 
     // Register revealed bytes as public inputs (if any).
     // We register revealed bytes first (byte order), each byte as 8 bits MSB-first.
@@ -86,23 +91,23 @@ where
         builder.register_public_input(db.target);
     }
 
-    let data = builder.build::<Cfg>();
-
     Sha256Circuit {
-        data,
         targets,
         rev_idx,
         rev_num_bytes,
     }
 }
 
-/// Prove using a previously-built circuit. `msg_bits` must have length equal to the message size
-/// used when building the circuit (in bits). `digest_bits` must be 256-bit SHA256 digest bits.
-pub fn prove_sha256_with_circuit<F, Cfg, const D: usize>(
-    circuit: &Sha256Circuit<F, Cfg, D>,
+/// Fills the witness for a previously-built SHA256 circuit.
+///
+/// - `msg_bits`: message bits, length must match the circuit's message size (in bits)
+/// - `digest_bits`: 256-bit SHA256 digest bits
+pub fn fill_sha256_circuit_witness<F, Cfg, const D: usize>(
+    circuit: &Sha256Circuit,
+    pw: &mut PartialWitness<F>,
     msg_bits: &[bool],
     digest_bits: &[bool],
-) -> Result<ProofWithPublicInputs<F, Cfg, D>>
+) -> Result<()>
 where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F=F>,
@@ -110,8 +115,6 @@ where
     let msg_len = msg_bits.len();
     assert_eq!(msg_len % 8, 0, "message length must be whole bytes (bits multiple of 8)");
     assert_eq!(digest_bits.len(), 256, "digest must be 256 bits");
-
-    let mut pw = PartialWitness::new();
 
     // Fill message bits.
     for i in 0..msg_len {
@@ -123,9 +126,7 @@ where
         pw.set_bool_target(circuit.targets.digest[i], b)?;
     }
 
-    let proof = circuit.data.prove(pw)?;
-    circuit.data.verify(proof.clone())?;
-    Ok(proof)
+    Ok(())
 }
 
 /// Print the revealed public inputs and the digest from the proof.
