@@ -10,6 +10,7 @@ plonky2 = { git = "https://github.com/sommer-ph/plonky2", features = ["timing"] 
 plonky2_ecdsa = { git = "https://github.com/sommer-ph/plonky2-ecdsa", features = ["static-issuer"] }
 #plonky2_sha256 = { git = "https://github.com/polymerdao/plonky2-sha256" }
 plonky2_sha256 = { path = "libs/plonky2_sha256" }
+plonky2_u32 = { path = "libs/plonky2_u32" }
 
 # Note: bincode 1.3 used for compatibility with plonky2-ecdsa ecosystem
 bincode = "1.3"

@@ -113,10 +113,22 @@ pub fn byte_array_to_scalar(bytes: &[u8]) -> Result<Secp256K1Scalar> {
     }
 
     let mut limbs = [0u64; 4];
-    for (i, chunk) in bytes.chunks_exact(8).enumerate() {
-        limbs[i] = u64::from_be_bytes(chunk.try_into()?);
+    for limb_idx in 0..4 {
+        let mut limb: u64 = 0;
+        for bit_in_limb in 0..64 {
+            let bit_idx = limb_idx * 64 + bit_in_limb;
+            let byte_idx = bit_idx / 8;
+            let bit_in_byte = 7 - (bit_idx % 8); // circuit iterates in natural MSB→LSB order
+            let bit = (bytes[byte_idx] >> bit_in_byte) & 1;
+            limb += bit as u64; // <- just add 0 or 1, no shifting/weighting
+        }
+        limbs[limb_idx] = limb;
     }
-    
+    // for (i, chunk) in bytes.chunks_exact(8).enumerate() {
+    //     limbs[i] = u64::from_be_bytes(chunk.try_into()?);
+    // }
+
+
     Ok(Secp256K1Scalar(limbs))
 }
 
