@@ -1,4 +1,8 @@
 use crate::cred::credential::SignedECDSACredential;
+use crate::proofs::ecdsa::{fill_ecdsa_witness, make_ecdsa_circuit};
+use crate::proofs::hash::{fill_sha256_circuit_witness, make_sha256_circuit};
+use crate::proofs::scalar_conversion::{fill_digest2scalar_witness, make_digest2scalar_circuit};
+use crate::utils::parsing::find_field_bit_indices;
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
 use plonky2::hash::hash_types::RichField;
@@ -9,28 +13,61 @@ use plonky2::plonk::config::{AlgebraicHasher, GenericConfig};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2_ecdsa::curve::ecdsa::ECDSAPublicKey;
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
+use plonky2_sha256::circuit::array_to_bits;
 use std::time::Instant;
 
-
+// TODO: potentially also split up in a build circuit function with all the targets and then a dedicated prove function.
 pub fn init_delegation<F, Cfg, const D: usize>(
     cred: &SignedECDSACredential,
     iss_pk: &ECDSAPublicKey<Secp256K1>,
-) where
+) -> Result<()>
+where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F=F>,
 {
-    // let mut config = CircuitConfig::standard_ecc_config();
-    // config.zero_knowledge = true;
-    // let mut builder = CircuitBuilder::<F, D>::new(config);
-    // let mut pw = PartialWitness::new();
+    let mut config = CircuitConfig::standard_ecc_config();
+    config.zero_knowledge = true;
+    let mut builder = CircuitBuilder::<F, D>::new(config);
+    let mut pw = PartialWitness::new();
 
-    // TODO:
-    // We now need to prove that the ECDSA signature is valid on the given hash w.r.t. iss pk
-    // then we need to prove the conversion of a hash bytes to hash scalar as verified in the ecdsa circuit.
-    // Given the hash as bytes, we prove knowledge of the preimage of the hash and reveal the user's public key (in the end, we will also reveal some other attributes).
-    // Also, we provide an public proof input that corresponds to the level and set L=0.
-    // The final proof should now verify with public inputs: (pk_iss, pk_user, L=0)
+    // Prove knowledge of a valid ECDSA signature.
+    let ecdsa_circuit = make_ecdsa_circuit::<F, Cfg, D>(&mut builder);
+    fill_ecdsa_witness::<F, Cfg, D>(&ecdsa_circuit, &mut pw, cred, iss_pk)?;
 
+    // Prove that the credential hash as bytes converts to the credential hash as scalar.
+    let cred_data_digest = cred.credential.hash_digest()?;
+    let b2c_circuit = make_digest2scalar_circuit(&mut builder);
+    fill_digest2scalar_witness(&b2c_circuit, &mut pw, &cred_data_digest, &cred.cred_hash)?;
+
+    // Prove knowledge of the preimage of the credential hash while selectively revealing the
+    // hashed public key.
+    let cred_data_bits_vec = array_to_bits(&cred.credential.to_bytes()?);
+    let cred_data_bits = cred_data_bits_vec.as_slice();
+    let cred_digest_bits_vec = array_to_bits(&cred_data_digest);
+    let cred_digest_bits = cred_digest_bits_vec.as_slice();
+    let cred_json = cred.credential.to_json()?;
+
+
+    let (rev_idx, rev_num_bytes) = find_field_bit_indices(&cred_json, "cred_pk_sec1_compressed")?;
+    let hash_circuit = make_sha256_circuit::<F, D>(&mut builder, cred_data_bits.len(), rev_idx, rev_num_bytes);
+    fill_sha256_circuit_witness::<F, Cfg, D>(&hash_circuit, &mut pw, cred_data_bits, cred_digest_bits)?;
+    // TODO: Convert the revealed public key bytes to some curve scalar or just in a format we want to work with later (hex is also fine I guess).
+
+    // Now somehow register the level L=0 as public input.
+    let level = builder.add_virtual_public_input();
+    // Enforce L = 0
+    builder.assert_zero(level);
+
+    let build_start = Instant::now();
+    let data = builder.build::<Cfg>();
+    println!("Init delegation circuit generation time: {:?}", build_start.elapsed());
+    let prove_start = Instant::now();
+    let proof = data.prove(pw)?;
+    println!("Init delegation proof generation time: {:?}", prove_start.elapsed());
+    data.verify(proof.clone())?;
+    println!("Init delegation proof passed!");
+
+    Ok(())
 }
 
 #[allow(dead_code)]

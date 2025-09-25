@@ -50,7 +50,7 @@ where
 ///
 /// - `rev_idx` is a bit index (0-based) where the revealed section start.
 /// - `rev_num_bytes` is how many bytes to reveal starting from the rev_idx (0 == reveal nothing).
-fn make_sha256_circuit<F, const D: usize>(
+pub fn make_sha256_circuit<F, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
     msg_len_bits: usize,
     rev_idx: usize,
@@ -120,7 +120,7 @@ where
 /// Print the revealed public inputs and the digest from the proof.
 ///
 /// `rev_num_bytes`: number of revealed bytes (0 = none)
-fn print_public_inputs<F, Cfg, const D: usize>(
+pub fn print_public_inputs<F, Cfg, const D: usize>(
     proof: &ProofWithPublicInputs<F, Cfg, D>,
     rev_num_bytes: usize,
 )
@@ -159,7 +159,7 @@ fn test_sha256_proof_rev_name() -> Result<()> {
 
     // Serialize the credential.
     let cred_json = credential.to_json()?;
-    let cred_bytes = credential.to_json_bytes()?;
+    let cred_bytes = credential.to_bytes()?;
     let msg_bits = plonky2_sha256::circuit::array_to_bits(&cred_bytes);
 
     // Get the index and length of the "name" field in bits.

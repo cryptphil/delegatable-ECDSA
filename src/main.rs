@@ -3,9 +3,9 @@ mod proofs;
 mod utils;
 
 use crate::cred::credential::{generate_issuer_keypair, issue_fixed_dummy_credential};
+use crate::proofs::delegate::init_delegation;
 use anyhow::Result;
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
-
 // fn main() -> Result<()> {
 //     const D: usize = 2;
 //     type C = PoseidonGoldilocksConfig;
@@ -31,13 +31,15 @@ use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
 
 fn main() -> Result<()> {
     const D: usize = 2;
-    type C = PoseidonGoldilocksConfig;
-    type F = <C as GenericConfig<D>>::F;
+    type Cfg = PoseidonGoldilocksConfig;
+    type F = <Cfg as GenericConfig<D>>::F;
 
     // Setup issuer key pair.
     let issuer = generate_issuer_keypair();
     // Issue a dummy credential signed by issuer
     let cred = issue_fixed_dummy_credential(&issuer.sk)?;
+
+    init_delegation::<F, Cfg, D>(&cred, &issuer.pk)?;
 
     // TODO:
     // init delegate

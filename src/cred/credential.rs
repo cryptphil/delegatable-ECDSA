@@ -11,6 +11,7 @@ use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 
 use crate::utils::parsing::hash_to_scalar;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Serialize, Deserialize)]
 pub struct CredentialData {
@@ -37,15 +38,26 @@ pub struct IssuerKeypair {
 }
 
 impl CredentialData {
-    pub fn to_json(&self) -> Result<serde_json::Value> {
+    pub(crate) fn to_json(&self) -> Result<serde_json::Value> {
         let credential_json: serde_json::Value = serde_json::to_value(self)?;
         Ok(credential_json)
     }
 
-    pub fn to_json_bytes(&self) -> Result<Vec<u8>> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let credential_json: serde_json::Value = serde_json::to_value(self)?;
         let cred_bytes = serde_json::to_vec(&credential_json)?;
         Ok(cred_bytes)
+    }
+
+    pub fn hash_digest(&self) -> Result<[u8; 32]> {
+        let cred_bytes = self.to_bytes()?;
+        Ok(Sha256::digest(cred_bytes).into())
+    }
+
+    pub fn hash_scalar(&self) -> Result<Secp256K1Scalar> {
+        let cred_bytes = self.to_bytes()?;
+        let cred_hash = hash_to_scalar(&cred_bytes)?;
+        Ok(cred_hash)
     }
 }
 
@@ -72,8 +84,7 @@ pub fn issue_fixed_dummy_credential(
         birthdate: "1990-01-01".to_string(),
     };
 
-    let cred_json = cred_data.to_json_bytes()?;
-    let cred_hash = hash_to_scalar(&cred_json)?;
+    let cred_hash = cred_data.hash_scalar()?;
     let signature = sign_message(cred_hash, *issuer_sk);
 
     Ok(SignedECDSACredential {
@@ -113,8 +124,7 @@ pub fn issue_credential(
         birthdate,
     };
 
-    let cred_json = credential.to_json_bytes()?;
-    let cred_hash = hash_to_scalar(&cred_json)?;
+    let cred_hash = credential.hash_scalar()?;
     let signature = sign_message(cred_hash, *issuer_sk);
 
     Ok(SignedECDSACredential {
@@ -141,8 +151,7 @@ pub fn delegate_credential(base_credential: &SignedECDSACredential) -> Result<Si
         birthdate: base_credential.credential.birthdate.clone(),
     };
 
-    let cred_json = credential.to_json_bytes()?;
-    let cred_hash = hash_to_scalar(&cred_json)?;
+    let cred_hash = credential.hash_scalar()?;
     let signature = sign_message(cred_hash, base_credential.cred_sk);
 
     Ok(SignedECDSACredential {

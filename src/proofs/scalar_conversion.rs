@@ -13,7 +13,7 @@ use plonky2_ecdsa::gadgets::nonnative::{CircuitBuilderNonNative, NonNativeTarget
 use plonky2_sha256::circuit::array_to_bits;
 use sha2::{Digest, Sha256};
 
-struct Digest2ScalarCircuit {
+pub struct Digest2ScalarCircuit {
     pub digest_bits_targets: Vec<BoolTarget>,
     pub expected_scalar: NonNativeTarget<Secp256K1Scalar>,
 }
@@ -67,7 +67,7 @@ where
 }
 
 /// Build & prove a hash→scalar circuit for a given digest.
-pub fn make_digest_to_scalar_proof<F, Cfg, const D: usize>(
+pub fn make_digest2scalar_proof<F, Cfg, const D: usize>(
     digest: &[u8; 32],
 ) -> Result<(VerifierCircuitData<F, Cfg, D>, ProofWithPublicInputs<F, Cfg, D>)>
 where
@@ -107,7 +107,7 @@ fn test_digest_to_scalar_proof() -> Result<()> {
     let digest = hasher.finalize();
     let digest_arr: [u8; 32] = digest.into();
 
-    let (vcd, proof) = make_digest_to_scalar_proof::<F, Cfg, D>(&digest_arr)?;
+    let (vcd, proof) = make_digest2scalar_proof::<F, Cfg, D>(&digest_arr)?;
 
     vcd.verify(proof)?;
 
