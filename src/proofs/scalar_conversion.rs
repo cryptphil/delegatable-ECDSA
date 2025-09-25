@@ -31,22 +31,18 @@ fn digest_to_scalar_circuit<F: RichField + Extendable<D>, const D: usize>(
         .collect();
     let expected_scalar: NonNativeTarget<Secp256K1Scalar> = builder.add_virtual_nonnative_target();
 
-    let mut limb_targets = Vec::with_capacity(4);
-    for limb_idx in 0..4 {
+    for limb_idx in 0..8 {
         let mut limb = builder.zero();
-        for bit_in_limb in 0..64 {
-            let bit_idx = limb_idx * 64 + bit_in_limb;
-            let bit = digest_targets[bit_idx];
-            // let coeff = builder.constant(F::from_canonical_u64(1u64 << (63 - bit_in_limb)));
-            // let contrib = builder.mul(bit.target, coeff);
-            // limb = builder.add(limb, contrib);
-            limb = builder.add(limb, bit.target)
-        }
-        limb_targets.push(limb);
-    }
-    let computed_scalar = NonNativeTarget::<Secp256K1Scalar>::from_target_vec(&limb_targets);
+        for bit_in_limb in 0..32 {
+            let bit = digest_targets[255 - (limb_idx * 32 + bit_in_limb)];
 
-    builder.connect_nonnative(&computed_scalar, &expected_scalar);
+            let coeff = builder.constant(F::from_canonical_u64(1u64 << bit_in_limb));
+            let contrib = builder.mul(bit.target, coeff);
+
+            limb = builder.add(limb, contrib);
+        }
+        builder.connect(limb, expected_scalar.value.limbs[limb_idx].0);
+    }
 
     HashToScalarCircuit {
         digest_bits_targets: digest_targets,
@@ -83,7 +79,6 @@ where
     Cfg: GenericConfig<D, F=F>,
 {
     let scalar = byte_array_to_scalar(digest)?;
-    println!("host limbs: {:?}", scalar.0);
 
     let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
     let mut pw = PartialWitness::new();

@@ -3,7 +3,7 @@
 use anyhow::{anyhow, bail, Result};
 use plonky2::field::extension::Extendable;
 use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
-use plonky2::field::types::{PrimeField, PrimeField64};
+use plonky2::field::types::{Field, PrimeField, PrimeField64};
 use plonky2::iop::target::BoolTarget;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
@@ -111,25 +111,9 @@ pub fn byte_array_to_scalar(bytes: &[u8]) -> Result<Secp256K1Scalar> {
     if bytes.len() != 32 {
         return Err(anyhow!("Expected 32 bytes for Secp256K1Scalar"));
     }
-
-    let mut limbs = [0u64; 4];
-    for limb_idx in 0..4 {
-        let mut limb: u64 = 0;
-        for bit_in_limb in 0..64 {
-            let bit_idx = limb_idx * 64 + bit_in_limb;
-            let byte_idx = bit_idx / 8;
-            let bit_in_byte = 7 - (bit_idx % 8); // circuit iterates in natural MSB→LSB order
-            let bit = (bytes[byte_idx] >> bit_in_byte) & 1;
-            limb += bit as u64; // <- just add 0 or 1, no shifting/weighting
-        }
-        limbs[limb_idx] = limb;
-    }
-    // for (i, chunk) in bytes.chunks_exact(8).enumerate() {
-    //     limbs[i] = u64::from_be_bytes(chunk.try_into()?);
-    // }
-
-
-    Ok(Secp256K1Scalar(limbs))
+    let hex_str = hex::encode(bytes);
+    let scalar = Secp256K1Scalar::from_noncanonical_biguint(hex_to_bigint(&hex_str));
+    Ok(scalar)
 }
 
 /// Convert a bit vector (MSB-first per byte) into a UTF-8 string.
