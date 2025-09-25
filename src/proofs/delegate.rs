@@ -1,16 +1,37 @@
 use crate::cred::credential::SignedECDSACredential;
-use crate::proofs::ecdsa::make_ecdsa_proof;
 use anyhow::Result;
+use plonky2::field::extension::Extendable;
+use plonky2::hash::hash_types::RichField;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData, VerifierCircuitTarget};
-use plonky2::plonk::config::{AlgebraicHasher, GenericConfig, PoseidonGoldilocksConfig};
+use plonky2::plonk::config::{AlgebraicHasher, GenericConfig};
+use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2_ecdsa::curve::ecdsa::ECDSAPublicKey;
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use std::time::Instant;
-use plonky2::field::extension::Extendable;
-use plonky2::hash::hash_types::RichField;
-use plonky2::plonk::proof::ProofWithPublicInputs;
+
+
+pub fn init_delegation<F, Cfg, const D: usize>(
+    cred: &SignedECDSACredential,
+    iss_pk: &ECDSAPublicKey<Secp256K1>,
+) where
+    F: RichField + Extendable<D>,
+    Cfg: GenericConfig<D, F=F>,
+{
+    // let mut config = CircuitConfig::standard_ecc_config();
+    // config.zero_knowledge = true;
+    // let mut builder = CircuitBuilder::<F, D>::new(config);
+    // let mut pw = PartialWitness::new();
+
+    // TODO:
+    // We now need to prove that the ECDSA signature is valid on the given hash w.r.t. iss pk
+    // then we need to prove the conversion of a hash bytes to hash scalar as verified in the ecdsa circuit.
+    // Given the hash as bytes, we prove knowledge of the preimage of the hash and reveal the user's public key (in the end, we will also reveal some other attributes).
+    // Also, we provide an public proof input that corresponds to the level and set L=0.
+    // The final proof should now verify with public inputs: (pk_iss, pk_user, L=0)
+
+}
 
 #[allow(dead_code)]
 pub fn prove_delegation_step<F, C, const D: usize>(
