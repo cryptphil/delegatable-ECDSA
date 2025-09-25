@@ -1,87 +1,119 @@
-use crate::utils::parsing::byte_array_to_scalar;
+use crate::utils::parsing::{byte_array_to_scalar, set_nonnative_target};
+use anyhow::Result;
 use plonky2::field::extension::Extendable;
 use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
-use plonky2::field::types::Field;
 use plonky2::hash::hash_types::RichField;
 use plonky2::iop::target::BoolTarget;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
-use plonky2::plonk::circuit_data::CircuitConfig;
+use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
+use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2_ecdsa::gadgets::nonnative::{CircuitBuilderNonNative, NonNativeTarget};
 use plonky2_sha256::circuit::array_to_bits;
 use sha2::{Digest, Sha256};
 
-/// Build a circuit that converts 256 SHA256 digest bits into a Secp256K1ScalarTarget.
-///
-/// `digest_bits`: slice of 256 boolean targets (MSB first)
-/// Returns: the scalar target
-fn build_sha256_to_scalar_circuit<F: RichField + Extendable<D>, const D: usize>(
-    builder: &mut CircuitBuilder<F, D>,
-    digest_bits: &[BoolTarget],
-) -> NonNativeTarget<Secp256K1Scalar> {
-    let scalar_target: NonNativeTarget<Secp256K1Scalar> = builder.add_virtual_nonnative_target();
+struct HashToScalarCircuit {
+    pub digest_bits_targets: Vec<BoolTarget>,
+    pub expected_scalar: NonNativeTarget<Secp256K1Scalar>,
+}
 
-    // 3. Pack 256 digest bits -> 4 * 64-bit limbs
-    let mut limb_targets = Vec::new();
-    for limb_idx in 0..4 {
+/// Builds a circuit that packs 256 SHA256 digest bits into a `Secp256K1Scalar` as a nonnative target.
+///
+/// # Returns
+///
+/// A `HashToScalarCircuit` containing the digest bit targets and the scalar target.
+fn digest_to_scalar_circuit<F: RichField + Extendable<D>, const D: usize>(
+    builder: &mut CircuitBuilder<F, D>,
+) -> HashToScalarCircuit {
+    let digest_targets: Vec<BoolTarget> = (0..256)
+        .map(|_| builder.add_virtual_bool_target_safe())
+        .collect();
+    let expected_scalar: NonNativeTarget<Secp256K1Scalar> = builder.add_virtual_nonnative_target();
+
+    for limb_idx in 0..8 {
         let mut limb = builder.zero();
-        for bit_in_limb in 0..64 {
-            let bit_idx = limb_idx * 64 + bit_in_limb;
-            let bit = digest_bits[bit_idx];
-            let coeff = builder.constant(F::from_canonical_u64(1u64 << (63 - bit_in_limb)));
+        for bit_in_limb in 0..32 {
+            let bit = digest_targets[255 - (limb_idx * 32 + bit_in_limb)];
+
+            let coeff = builder.constant(F::from_canonical_u64(1u64 << bit_in_limb));
             let contrib = builder.mul(bit.target, coeff);
 
             limb = builder.add(limb, contrib);
         }
-        limb_targets.push(limb);
-        builder.connect(limb, scalar_target.value.limbs[limb_idx].0);
+        builder.connect(limb, expected_scalar.value.limbs[limb_idx].0);
     }
 
-    scalar_target
+    HashToScalarCircuit {
+        digest_bits_targets: digest_targets,
+        expected_scalar,
+    }
 }
 
+fn fill_hash_to_scalar_witness<F, const D: usize>(
+    circuit: &HashToScalarCircuit,
+    pw: &mut PartialWitness<F>,
+    digest: &[u8; 32],
+    scalar: &Secp256K1Scalar,
+) -> Result<()>
+where
+    F: RichField + Extendable<D>,
+{
+    let digests_targets = &circuit.digest_bits_targets;
+    let digest_bits_val = array_to_bits(digest);
+    for (t, bit) in digests_targets.iter().zip(digest_bits_val.iter()) {
+        pw.set_bool_target(*t, *bit)?;
+    }
+
+    set_nonnative_target(pw, &circuit.expected_scalar, *scalar)?;
+
+    Ok(())
+}
+
+/// Build & prove a hash→scalar circuit for a given digest.
+pub fn make_hash_to_scalar_proof<F, Cfg, const D: usize>(
+    digest: &[u8; 32],
+) -> Result<(VerifierCircuitData<F, Cfg, D>, ProofWithPublicInputs<F, Cfg, D>)>
+where
+    F: RichField + Extendable<D>,
+    Cfg: GenericConfig<D, F=F>,
+{
+    let scalar = byte_array_to_scalar(digest)?;
+
+    let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+    let mut pw = PartialWitness::new();
+
+    let circuit = digest_to_scalar_circuit::<F, D>(&mut builder);
+
+    let build_start = std::time::Instant::now();
+
+    let data = builder.build::<Cfg>();
+    println!("Hash→Scalar circuit generation time: {:?}", build_start.elapsed());
+
+    fill_hash_to_scalar_witness::<F, D>(&circuit, &mut pw, digest, &scalar)?;
+
+    let prove_start = std::time::Instant::now();
+    let proof = data.prove(pw)?;
+    println!("Hash→Scalar proof generation time: {:?}", prove_start.elapsed());
+
+    Ok((data.verifier_data(), proof))
+}
 
 #[test]
-fn test_scalar_conversion() -> anyhow::Result<()> {
+fn test_hash_to_scalar_proof() -> Result<()> {
     const D: usize = 2;
     type Cfg = PoseidonGoldilocksConfig;
     type F = <Cfg as GenericConfig<D>>::F;
 
     let message = b"Hello, world!";
-    let digest = Sha256::digest(message); // 32 bytes
-    let expected_scalar = byte_array_to_scalar(digest.as_slice())?;
+    let mut hasher = Sha256::new();
+    hasher.update(message);
+    let digest = hasher.finalize();
+    let digest_arr: [u8; 32] = digest.into();
 
-    // Build the circuit
-    let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_ecc_config());
+    let (vcd, proof) = make_hash_to_scalar_proof::<F, Cfg, D>(&digest_arr)?;
 
-    // Add digest bits as BoolTargets
-    let digest_bits: Vec<BoolTarget> = (0..256)
-        .map(|_| builder.add_virtual_bool_target_safe())
-        .collect();
-
-    let scalar_target = build_sha256_to_scalar_circuit::<F, D>(&mut builder, &digest_bits);
-
-    // Now create constant targets for the expected limbs and connect them to the scalar's limbs.
-    // This enforces scalar_target == expected scalar inside the circuit.
-    for (i, &limb_val) in expected_scalar.0.iter().enumerate() {
-        // create a field-constant target equal to the limb value
-        let const_t = builder.constant(F::from_canonical_u64(limb_val));
-        // connect the constant to the corresponding internal limb target of the nonnative scalar
-        let eq = builder.is_equal(const_t, scalar_target.value.limbs[i].0);
-        builder.assert_one(eq.target);
-    }
-
-    let data = builder.build::<Cfg>();
-    let mut pw = PartialWitness::new();
-
-    let digest_bits_val = array_to_bits(&digest);
-    for (t, bit) in digest_bits.iter().zip(digest_bits_val.iter()) {
-        pw.set_bool_target(*t, *bit)?;
-    }
-
-    let proof = data.prove(pw)?;
-    data.verify(proof.clone())?;
+    vcd.verify(proof)?;
 
     Ok(())
 }
