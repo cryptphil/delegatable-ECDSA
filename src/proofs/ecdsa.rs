@@ -44,26 +44,31 @@ where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F=F>,
 {
+    let mut config = CircuitConfig::standard_ecc_config();
+    config.zero_knowledge = true;
+    let mut builder = CircuitBuilder::<F, D>::new(config);
+    let mut pw = PartialWitness::new();
+
+    let targets = make_ecdsa_circuit::<F, Cfg, D>(&mut builder);
     let build_start = Instant::now();
-    let circuit = build_ecdsa_circuit::<F, Cfg, D>();
+    let data = builder.build::<Cfg>();
     println!("ECDSA circuit generation time: {:?}", build_start.elapsed());
+
+    fill_ecdsa_witness::<F, Cfg, D>(&targets, &mut pw, cred, iss_pk)?;
+
     let prove_start = Instant::now();
-    let proof = prove_ecdsa(&circuit, cred, iss_pk)?;
+    let proof = data.prove(pw)?;
     println!("ECDSA proof generation time: {:?}", prove_start.elapsed());
-    circuit.data.verify(proof.clone())?;
-    Ok((circuit.data.verifier_data(), proof))
+    Ok((data.verifier_data(), proof))
 }
 
-/// Build a circuit that verifies an ECDSA signature over secp256k1.
-fn build_ecdsa_circuit<F, Cfg, const D: usize>() -> ECDSACircuit<F, Cfg, D>
+fn make_ecdsa_circuit<F, Cfg, const D: usize>(
+    builder: &mut CircuitBuilder<F, D>,
+) -> ECDSACircuitTargets<Secp256K1, Secp256K1Scalar>
 where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F = F>,
 {
-    let mut config = CircuitConfig::standard_ecc_config();
-    config.zero_knowledge = true;
-    let mut builder = CircuitBuilder::<F, D>::new(config);
-
     // Allocate *targets* instead of constants
     let msg_target = builder.add_virtual_nonnative_target();
     let r_target = builder.add_virtual_nonnative_target();
@@ -77,44 +82,37 @@ where
         builder.register_public_input(limb.0);
     }
 
-    verify_secp256k1_message_circuit(&mut builder, msg_target.clone(), sig_target.clone(), pk_target.clone());
-    let data = builder.build::<Cfg>();
+    verify_secp256k1_message_circuit(builder, msg_target.clone(), sig_target.clone(), pk_target.clone());
 
-    let targets = ECDSACircuitTargets {
+    ECDSACircuitTargets {
         pk_issuer: pk_target.0,
         msg: msg_target,
         sig: sig_target,
-    };
-
-    ECDSACircuit { data, targets }
+    }
 }
 
 /// Create a proof of knowledge of an ECDSA signature over secp256k1.
 ///
 /// `cred`: The signed credential containing the credential data, signature, and the message hash.
 /// `iss_pk`: The issuer's public key to verify the signature against.
-fn prove_ecdsa<F, Cfg, const D: usize>(
-    circuit: &ECDSACircuit<F, Cfg, D>,
+fn fill_ecdsa_witness<F, Cfg, const D: usize>(
+    targets: &ECDSACircuitTargets<Secp256K1, Secp256K1Scalar>,
+    pw: &mut PartialWitness<F>,
     cred: &SignedECDSACredential,
     iss_pk: &ECDSAPublicKey<Secp256K1>,
-) -> Result<ProofWithPublicInputs<F, Cfg, D>>
+) -> Result<()>
 where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F = F>,
 {
-    let mut pw = PartialWitness::new();
-
     // Fill witness with concrete values
-    set_nonnative_target(&mut pw, &circuit.targets.msg, cred.cred_hash)?;
-    set_nonnative_target(&mut pw, &circuit.targets.sig.r, cred.signature.r)?;
-    set_nonnative_target(&mut pw, &circuit.targets.sig.s, cred.signature.s)?;
-    pw.set_biguint_target(&circuit.targets.pk_issuer.x.value, &iss_pk.0.x.to_canonical_biguint())?;
-    pw.set_biguint_target(&circuit.targets.pk_issuer.y.value, &iss_pk.0.y.to_canonical_biguint())?;
+    set_nonnative_target(pw, &targets.msg, cred.cred_hash)?;
+    set_nonnative_target(pw, &targets.sig.r, cred.signature.r)?;
+    set_nonnative_target(pw, &targets.sig.s, cred.signature.s)?;
+    pw.set_biguint_target(&targets.pk_issuer.x.value, &iss_pk.0.x.to_canonical_biguint())?;
+    pw.set_biguint_target(&targets.pk_issuer.y.value, &iss_pk.0.y.to_canonical_biguint())?;
 
-    // let mut timing = TimingTree::new("inner_proof", Level::Info);
-    // let proof = prove(&circuit.data.prover_only, &circuit.data.common, pw, &mut timing);
-    // proof
-    circuit.data.prove(pw)
+    Ok(())
 }
 
 

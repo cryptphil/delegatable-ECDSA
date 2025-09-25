@@ -11,14 +11,6 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2_sha256::circuit::Sha256Targets;
 use sha2::{Digest, Sha256};
 
-/// Container for the compiled SHA256 circuit and its relevant targets.
-pub struct Sha256Circuit {
-    pub targets: Sha256Targets, // The message and digest targets.
-    pub rev_idx: usize,        // The bit index where the revealed window section.
-    pub rev_num_bytes: usize,  // Number of bytes revealed.
-}
-
-
 /// Build and prove a SHA256 circuit for a message of arbitrary length with a fixed reveal section.
 ///
 /// - `msg_bits`: full message bits (MSB-first per byte)
@@ -63,7 +55,7 @@ fn make_sha256_circuit<F, const D: usize>(
     msg_len_bits: usize,
     rev_idx: usize,
     rev_num_bytes: usize,
-) -> Sha256Circuit
+) -> Sha256Targets
 where
     F: RichField + Extendable<D>,
 {
@@ -91,11 +83,7 @@ where
         builder.register_public_input(db.target);
     }
 
-    Sha256Circuit {
-        targets,
-        rev_idx,
-        rev_num_bytes,
-    }
+    targets
 }
 
 /// Fills the witness for a previously-built SHA256 circuit.
@@ -103,7 +91,7 @@ where
 /// - `msg_bits`: message bits, length must match the circuit's message size (in bits)
 /// - `digest_bits`: 256-bit SHA256 digest bits
 pub fn fill_sha256_circuit_witness<F, Cfg, const D: usize>(
-    circuit: &Sha256Circuit,
+    targets: &Sha256Targets,
     pw: &mut PartialWitness<F>,
     msg_bits: &[bool],
     digest_bits: &[bool],
@@ -118,12 +106,12 @@ where
 
     // Fill message bits.
     for i in 0..msg_len {
-        pw.set_bool_target(circuit.targets.message[i], msg_bits[i])?;
+        pw.set_bool_target(targets.message[i], msg_bits[i])?;
     }
 
     // Fill digest bits.
     for (i, &b) in digest_bits.iter().enumerate() {
-        pw.set_bool_target(circuit.targets.digest[i], b)?;
+        pw.set_bool_target(targets.digest[i], b)?;
     }
 
     Ok(())
