@@ -13,19 +13,15 @@ use plonky2_ecdsa::gadgets::nonnative::{CircuitBuilderNonNative, NonNativeTarget
 use plonky2_sha256::circuit::array_to_bits;
 use sha2::{Digest, Sha256};
 
-struct HashToScalarCircuit {
+struct Digest2ScalarCircuit {
     pub digest_bits_targets: Vec<BoolTarget>,
     pub expected_scalar: NonNativeTarget<Secp256K1Scalar>,
 }
 
-/// Builds a circuit that packs 256 SHA256 digest bits into a `Secp256K1Scalar` as a nonnative target.
-///
-/// # Returns
-///
-/// A `HashToScalarCircuit` containing the digest bit targets and the scalar target.
-fn digest_to_scalar_circuit<F: RichField + Extendable<D>, const D: usize>(
+/// Builds a circuit that packs a 32 Bytes digest into a `Secp256K1Scalar` as a nonnative target.
+pub fn make_digest2scalar_circuit<F: RichField + Extendable<D>, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
-) -> HashToScalarCircuit {
+) -> Digest2ScalarCircuit {
     let digest_targets: Vec<BoolTarget> = (0..256)
         .map(|_| builder.add_virtual_bool_target_safe())
         .collect();
@@ -44,14 +40,14 @@ fn digest_to_scalar_circuit<F: RichField + Extendable<D>, const D: usize>(
         builder.connect(limb, expected_scalar.value.limbs[limb_idx].0);
     }
 
-    HashToScalarCircuit {
+    Digest2ScalarCircuit {
         digest_bits_targets: digest_targets,
         expected_scalar,
     }
 }
 
-fn fill_hash_to_scalar_witness<F, const D: usize>(
-    circuit: &HashToScalarCircuit,
+pub fn fill_digest2scalar_witness<F, const D: usize>(
+    circuit: &Digest2ScalarCircuit,
     pw: &mut PartialWitness<F>,
     digest: &[u8; 32],
     scalar: &Secp256K1Scalar,
@@ -71,7 +67,7 @@ where
 }
 
 /// Build & prove a hash→scalar circuit for a given digest.
-pub fn make_hash_to_scalar_proof<F, Cfg, const D: usize>(
+pub fn make_digest_to_scalar_proof<F, Cfg, const D: usize>(
     digest: &[u8; 32],
 ) -> Result<(VerifierCircuitData<F, Cfg, D>, ProofWithPublicInputs<F, Cfg, D>)>
 where
@@ -83,14 +79,14 @@ where
     let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
     let mut pw = PartialWitness::new();
 
-    let circuit = digest_to_scalar_circuit::<F, D>(&mut builder);
+    let circuit = make_digest2scalar_circuit::<F, D>(&mut builder);
 
     let build_start = std::time::Instant::now();
 
     let data = builder.build::<Cfg>();
     println!("Hash→Scalar circuit generation time: {:?}", build_start.elapsed());
 
-    fill_hash_to_scalar_witness::<F, D>(&circuit, &mut pw, digest, &scalar)?;
+    fill_digest2scalar_witness::<F, D>(&circuit, &mut pw, digest, &scalar)?;
 
     let prove_start = std::time::Instant::now();
     let proof = data.prove(pw)?;
@@ -100,7 +96,7 @@ where
 }
 
 #[test]
-fn test_hash_to_scalar_proof() -> Result<()> {
+fn test_digest_to_scalar_proof() -> Result<()> {
     const D: usize = 2;
     type Cfg = PoseidonGoldilocksConfig;
     type F = <Cfg as GenericConfig<D>>::F;
@@ -111,7 +107,7 @@ fn test_hash_to_scalar_proof() -> Result<()> {
     let digest = hasher.finalize();
     let digest_arr: [u8; 32] = digest.into();
 
-    let (vcd, proof) = make_hash_to_scalar_proof::<F, Cfg, D>(&digest_arr)?;
+    let (vcd, proof) = make_digest_to_scalar_proof::<F, Cfg, D>(&digest_arr)?;
 
     vcd.verify(proof)?;
 
