@@ -20,7 +20,7 @@ use std::time::Instant;
 pub fn init_delegation<F, Cfg, const D: usize>(
     cred: &SignedECDSACredential,
     iss_pk: &ECDSAPublicKey<Secp256K1>,
-) -> Result<()>
+) -> Result<(ProofWithPublicInputs<F, Cfg, D>, VerifierCircuitData<F, Cfg, D>)>
 where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F=F>,
@@ -48,6 +48,7 @@ where
     let cred_json = cred.credential.to_json()?;
 
 
+    // Prove knowledge of the sha256 preimage while revealing the credential public key.
     let (rev_idx, rev_num_bytes) = find_field_bit_indices(&cred_json, "cred_pk_sec1_compressed")?;
     let hash_circuit = make_sha256_circuit::<F, D>(&mut builder, cred_data_bits.len(), rev_idx, rev_num_bytes);
     fill_sha256_circuit_witness::<F, Cfg, D>(&hash_circuit, &mut pw, cred_data_bits, cred_digest_bits)?;
@@ -64,10 +65,8 @@ where
     let prove_start = Instant::now();
     let proof = data.prove(pw)?;
     println!("Init delegation proof generation time: {:?}", prove_start.elapsed());
-    data.verify(proof.clone())?;
-    println!("Init delegation proof passed!");
 
-    Ok(())
+    Ok((proof.clone(), data.verifier_data()))
 }
 
 #[allow(dead_code)]
@@ -98,12 +97,15 @@ where
         circuit_digest:       circuit_digest_t,
     };
 
+    // TODO: Verify the proof for the (expected?) previous level L, which must be part of the public inputs.
+
     builder.verify_proof::<C>(&proof_t, &verifier_circuit_t, &verifier_data.common);
 
     let mut pw = PartialWitness::<F>::new();
     pw.set_proof_with_pis_target(&proof_t, inner_proof)?;
 
-    // Then prove current cred
+    // TODO: Now we add new constraints including that the new level L = prev_L + 1.
+
     let data = builder.build::<C>();
 
     let rec_start = Instant::now();

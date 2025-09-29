@@ -3,7 +3,7 @@ mod proofs;
 mod utils;
 
 use crate::cred::credential::{generate_issuer_keypair, issue_fixed_dummy_credential};
-use crate::proofs::delegate::init_delegation;
+use crate::proofs::delegate::{init_delegation, prove_delegation_step};
 use anyhow::Result;
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
 // fn main() -> Result<()> {
@@ -39,7 +39,12 @@ fn main() -> Result<()> {
     // Issue a dummy credential signed by issuer
     let cred = issue_fixed_dummy_credential(&issuer.sk)?;
 
-    init_delegation::<F, Cfg, D>(&cred, &issuer.pk)?;
+    let (proof, verifier_data) = init_delegation::<F, Cfg, D>(&cred, &issuer.pk)?;
+
+    verifier_data.verify(proof.clone())?;
+    println!("Init delegation proof passed!");
+
+    prove_delegation_step(&verifier_data, &proof, &cred)?;
 
     // TODO:
     // init delegate
