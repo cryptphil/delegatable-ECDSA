@@ -28,12 +28,13 @@ pub struct ECDSACircuit<F: RichField + Extendable<D>, Cfg: GenericConfig<D, F = 
 
 #[allow(dead_code)]
 pub struct ECDSACircuitTargets<C: Curve, P: PrimeField> {
-    pub pk_issuer: AffinePointTarget<C>,
+    pub issuer_pk: AffinePointTarget<C>,
     pub msg: NonNativeTarget<P>,
     pub sig: ECDSASignatureTarget<C>,
 }
 
 /// Add the ECDSA verification constraints to the circuit builder and return the targets.
+/// Registers the issuer public key as public inputs (16 limbs).
 pub fn make_ecdsa_circuit<F, Cfg, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
 ) -> ECDSACircuitTargets<Secp256K1, Secp256K1Scalar>
@@ -48,15 +49,12 @@ where
     let sig_target = ECDSASignatureTarget { r: r_target, s: s_target };
 
     // Register the issuer public key as public input.
-    // TODO: Pretty print the issuer's public key at some later point.
-    for limb in pk_target.0.x.value.limbs.iter().chain(pk_target.0.y.value.limbs.iter()) {
-        builder.register_public_input(limb.0);
-    }
+    register_pk_as_pi::<F, Cfg, D>(builder, &pk_target);
 
     verify_secp256k1_message_circuit(builder, msg_target.clone(), sig_target.clone(), pk_target.clone());
 
     ECDSACircuitTargets {
-        pk_issuer: pk_target.0,
+        issuer_pk: pk_target.0,
         msg: msg_target,
         sig: sig_target,
     }
@@ -77,10 +75,23 @@ where
     set_nonnative_target(pw, &targets.msg, cred.cred_hash)?;
     set_nonnative_target(pw, &targets.sig.r, cred.signature.r)?;
     set_nonnative_target(pw, &targets.sig.s, cred.signature.s)?;
-    pw.set_biguint_target(&targets.pk_issuer.x.value, &iss_pk.0.x.to_canonical_biguint())?;
-    pw.set_biguint_target(&targets.pk_issuer.y.value, &iss_pk.0.y.to_canonical_biguint())?;
+    pw.set_biguint_target(&targets.issuer_pk.x.value, &iss_pk.0.x.to_canonical_biguint())?;
+    pw.set_biguint_target(&targets.issuer_pk.y.value, &iss_pk.0.y.to_canonical_biguint())?;
 
     Ok(())
+}
+
+pub(crate) fn register_pk_as_pi<F, Cfg, const D: usize>(
+    builder: &mut CircuitBuilder<impl RichField + Extendable<D>, D>,
+    pk_target: &ECDSAPublicKeyTarget<Secp256K1>,
+) where
+    F: RichField + Extendable<D>,
+    Cfg: GenericConfig<D, F=F>,
+{
+    let limbs_iter = pk_target.0.x.value.limbs.iter().chain(pk_target.0.y.value.limbs.iter());
+    for limb in limbs_iter {
+        builder.register_public_input(limb.0);
+    }
 }
 
 #[test]

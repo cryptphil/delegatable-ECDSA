@@ -68,6 +68,7 @@ where
 
     // Register revealed bytes as public inputs (if any).
     // We register revealed bytes first (byte order), each byte as 8 bits MSB-first.
+    // FIXME: Instead of registering bits, register whole bytes.
     if rev_num_bytes > 0 {
         for byte_offset in 0..rev_num_bytes {
             let bit_base = rev_idx + byte_offset * 8;
@@ -78,10 +79,10 @@ where
         }
     }
 
-    // Register digest bits as public input.
-    for db in &targets.digest {
-        builder.register_public_input(db.target);
-    }
+    // FIXME: Remove, is not necessary to register digest as public input.
+    // for db in &targets.digest {
+    //     builder.register_public_input(db.target);
+    // }
 
     targets
 }
