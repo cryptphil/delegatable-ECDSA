@@ -29,7 +29,7 @@ pub struct InitDelegationProof<F: RichField + Extendable<D>, Cfg: GenericConfig<
 
 pub struct DelegationCircuit<F: RichField + Extendable<D>, Cfg: GenericConfig<D, F=F>, const D: usize> {
     pub data: CircuitData<F, Cfg, D>,
-    pub proof_target: ProofWithPublicInputsTarget<D>,
+    pub inner_proof_target: ProofWithPublicInputsTarget<D>,
     pub issuer_pk_target: ECDSAPublicKeyTarget<Secp256K1>,
     pub new_level_target: Target,
     pub level_index_pis: usize, // which position in public_inputs holds the proof level L.
@@ -122,7 +122,6 @@ where
     let exp_level = builder.add(prev_level_target, one);
     builder.connect(exp_level, l_new);
 
-
     let constants_sigmas_cap_t =
         builder.constant_merkle_cap(&verifier_data.verifier_only.constants_sigmas_cap);
     let circuit_digest_t = builder.constant_hash(verifier_data.verifier_only.circuit_digest);
@@ -137,7 +136,7 @@ where
 
     DelegationCircuit {
         data,
-        proof_target,
+        inner_proof_target: proof_target,
         issuer_pk_target,
         new_level_target: l_new,
         level_index_pis: 16,
@@ -156,13 +155,12 @@ where
     <Cfg as GenericConfig<D>>::Hasher: AlgebraicHasher<F>,
 {
     let mut pw = PartialWitness::<F>::new();
-    pw.set_proof_with_pis_target(&rec_circuit.proof_target, inner_proof)?;
+    pw.set_proof_with_pis_target(&rec_circuit.inner_proof_target, inner_proof)?;
     pw.set_biguint_target(&rec_circuit.issuer_pk_target.0.x.value, &issuer_pk.0.x.to_canonical_biguint())?;
     pw.set_biguint_target(&rec_circuit.issuer_pk_target.0.y.value, &issuer_pk.0.y.to_canonical_biguint())?;
 
-    let inner_level_field = inner_proof.public_inputs[level_idx_inner_pis];
-    let inner_level_u64 = inner_level_field.to_canonical_u64();
-    let new_level = inner_level_u64 + 1;
+    let inner_level = inner_proof.public_inputs[level_idx_inner_pis].to_canonical_u64();
+    let new_level = inner_level + 1;
 
     pw.set_target(rec_circuit.new_level_target, F::from_canonical_u64(new_level))?;
 

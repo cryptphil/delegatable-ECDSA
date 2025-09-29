@@ -19,7 +19,6 @@ fn main() -> Result<()> {
     let cred = issue_fixed_dummy_credential(&issuer.sk)?;
 
     let init_circuit = init_delegation::<F, Cfg, D>(&cred, &issuer.pk)?;
-
     init_circuit.verifier_data.verify(init_circuit.proof.clone())?;
     println!("Init delegation proof passed!");
 
