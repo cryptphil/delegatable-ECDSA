@@ -67,7 +67,6 @@ where
     let cred_digest_bits = cred_digest_bits_vec.as_slice();
     let cred_json = cred.credential.to_json()?;
 
-
     // Prove knowledge of the sha256 preimage while revealing the credential public key.
     let (rev_idx, rev_num_bytes) = find_field_bit_indices(&cred_json, "cred_pk_sec1_compressed")?;
     let hash_circuit = make_sha256_circuit::<F, D>(&mut builder, cred_data_bits.len(), rev_idx, rev_num_bytes);
@@ -148,7 +147,7 @@ pub fn prove_delegation_step<F, Cfg, const D: usize>(
     inner_proof: &ProofWithPublicInputs<F, Cfg, D>,
     issuer_pk: &ECDSAPublicKey<Secp256K1>,
     level_idx_inner_pis: usize,
-) -> Result<(ProofWithPublicInputs<F, Cfg, D>, VerifierCircuitData<F, Cfg, D>)>
+) -> Result<ProofWithPublicInputs<F, Cfg, D>>
 where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F=F>,
@@ -168,6 +167,6 @@ where
     let proof = rec_circuit.data.prove(pw)?;
     println!("Delegation step level {} proof generation time: {:?}", new_level, prove_start.elapsed());
 
-    Ok((proof.clone(), rec_circuit.data.verifier_data()))
+    Ok(proof)
 }
 

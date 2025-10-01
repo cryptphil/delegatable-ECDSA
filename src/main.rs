@@ -5,6 +5,7 @@ mod utils;
 use crate::cred::credential::{generate_issuer_keypair, issue_fixed_dummy_credential};
 use crate::proofs::delegate::{build_delegation_circuit, init_delegation, prove_delegation_step};
 use anyhow::Result;
+use plonky2::field::types::PrimeField64;
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
 
 
@@ -22,26 +23,29 @@ fn main() -> Result<()> {
     init_circuit.verifier_data.verify(init_circuit.proof.clone())?;
     println!("Init delegation proof passed!");
 
-    let first_del_circuit = build_delegation_circuit(&init_circuit.verifier_data, init_circuit.level_index_pis);
+    // Build delegation circuits for 4 levels of delegation.
+    println!("Building 4 levels of delegation circuits...");
+    let build_start = std::time::Instant::now();
+    let del_circuit1 = build_delegation_circuit(&init_circuit.verifier_data, init_circuit.level_index_pis);
+    let del_circuit2 = build_delegation_circuit(&del_circuit1.data.verifier_data(), del_circuit1.level_index_pis);
+    let del_circuit3 = build_delegation_circuit(&del_circuit2.data.verifier_data(), del_circuit2.level_index_pis);
+    let del_circuit4 = build_delegation_circuit(&del_circuit3.data.verifier_data(), del_circuit3.level_index_pis);
+    println!("Generation time of 4 delegation circuits: {:?}", build_start.elapsed());
 
-    // First delegation.
-    let (proof1, verifier1) = prove_delegation_step(&first_del_circuit, &init_circuit.proof, &issuer.pk, init_circuit.level_index_pis)?;
-    first_del_circuit.data.verify(proof1.clone())?;
-    println!("Recursive proof (layer {}) passed!", proof1.public_inputs[first_del_circuit.level_index_pis]);
+    let circuits = vec![&del_circuit1, &del_circuit2, &del_circuit3, &del_circuit4];
+    let mut prev_proof = init_circuit.proof;
 
-    // This delegation circuit can be used fo all further delegation steps.
-    let del_circuit = build_delegation_circuit(&verifier1, first_del_circuit.level_index_pis);
+    for (i, c) in circuits.iter().enumerate() {
+        println!("Starting delegation {}...", i + 1);
+        let proof_start = std::time::Instant::now();
+        let proof = prove_delegation_step(c, &prev_proof, &issuer.pk, c.level_index_pis)?;
+        println!("Delegation {} proof time: {:?}", i + 1, proof_start.elapsed());
 
-    // Second delegation.
-    let (proof2, _verifier2) = prove_delegation_step(&del_circuit, &proof1, &issuer.pk, del_circuit.level_index_pis)?;
-    del_circuit.data.verify(proof2.clone())?;
-    println!("Recursive proof (layer {}) passed!", proof2.public_inputs[del_circuit.level_index_pis]);
-
-    // TODO: Third delegation does not work yet.
-    // let (proof3, _verifier3) = prove_delegation_step(&del_circuit, &proof2, &issuer.pk, del_circuit.level_index_pis)?;
-    // del_circuit.data.verify(proof3.clone())?;
-    // println!("Recursive proof (layer {}) passed!", proof3.public_inputs[del_circuit.level_index_pis]);
-
+        if proof.public_inputs[c.level_index_pis].to_canonical_u64() != (i as u64 + 1) {
+            panic!("Level index in public inputs is wrong!");
+        }
+        prev_proof = proof;
+    }
 
     // TODO: Create a presentation proof where we provide knowledge of a delegation proof and create a proof of knowledge of the public key.
 
