@@ -47,6 +47,10 @@ fn main() -> Result<()> {
         prev_proof = proof;
     }
 
+    // Verify the last proof
+    del_circuit4.data.verify(prev_proof)?;
+    println!("Final delegation proof passed!");
+
     // TODO: Create a presentation proof where we provide knowledge of a delegation proof and create a proof of knowledge of the public key.
 
     Ok(())
