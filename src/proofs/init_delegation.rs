@@ -1,12 +1,14 @@
-use crate::cred::credential::{generate_fixed_issuer_keypair, issue_fixed_dummy_credential, SignedECDSACredential};
+use crate::cred::credential::{
+    generate_fixed_issuer_keypair, issue_fixed_dummy_credential, SignedECDSACredential,
+};
 use crate::proofs::ecdsa::{fill_ecdsa_witness, make_ecdsa_circuit, ECDSACircuitTargets};
 use crate::proofs::hash::{fill_sha256_circuit_witness, make_sha256_circuit};
-use crate::proofs::scalar_conversion::{fill_digest2scalar_witness, make_digest2scalar_circuit, Digest2ScalarTargets};
+use crate::proofs::scalar_conversion::{
+    fill_digest2scalar_witness, make_digest2scalar_circuit, Digest2ScalarTargets,
+};
 use crate::utils::parsing::find_field_bit_indices;
 use anyhow::Result;
-use num_traits::zero;
 use plonky2::field::extension::Extendable;
-use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
 use plonky2::hash::hash_types::RichField;
 use plonky2::iop::target::Target;
@@ -27,7 +29,11 @@ pub struct InitDelegationTargets {
     pub rev_num_bytes: usize,
 }
 
-pub struct InitDelegationProof<F: RichField + Extendable<D>, Cfg: GenericConfig<D, F=F>, const D: usize> {
+pub struct InitDelegationProof<
+    F: RichField + Extendable<D>,
+    Cfg: GenericConfig<D, F = F>,
+    const D: usize,
+> {
     pub proof: ProofWithPublicInputs<F, Cfg, D>,
     pub verifier_data: VerifierCircuitData<F, Cfg, D>,
     //pub level_index_pis: usize, TODO: I dont think we need this, i.e., I removed it.
@@ -72,7 +78,7 @@ where
 
 /// Build once without any credential-bound data
 pub fn build_init_delegation_circuit_data<F, Cfg, const D: usize>()
-    -> Result<(CircuitData<F, Cfg, D>, InitDelegationTargets)>
+-> Result<(CircuitData<F, Cfg, D>, InitDelegationTargets)>
 where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F = F>,
@@ -109,7 +115,12 @@ where
     let mut pw = PartialWitness::new();
     fill_ecdsa_witness::<F, Cfg, D>(&targets.ecdsa_targets, &mut pw, cred, iss_pk)?;
     fill_digest2scalar_witness(&targets.b2c_targets, &mut pw, &cred_digest, &cred.cred_hash)?;
-    fill_sha256_circuit_witness::<F, Cfg, D>(&targets.hash_targets, &mut pw, &cred_bytes_bits, &cred_digest_bits)?;
+    fill_sha256_circuit_witness::<F, Cfg, D>(
+        &targets.hash_targets,
+        &mut pw,
+        &cred_bytes_bits,
+        &cred_digest_bits,
+    )?;
     pw.set_target(targets.level_pi, F::ZERO)?; // fill level witness with zero
 
     // Prove
@@ -130,8 +141,7 @@ fn test_init_delegation() -> Result<()> {
 
     // === 1) Build once  ===
     let build_start = std::time::Instant::now();
-    let (data, targets) =
-        build_init_delegation_circuit_data::<F, Cfg, D>()?;
+    let (data, targets) = build_init_delegation_circuit_data::<F, Cfg, D>()?;
     let build_time = build_start.elapsed();
     println!("init_delegation: Circuit build time: {:?}", build_time);
 
@@ -140,8 +150,7 @@ fn test_init_delegation() -> Result<()> {
     let signed = issue_fixed_dummy_credential(&issuer_kp.sk)?;
 
     let prove_start = std::time::Instant::now();
-    let init_proof =
-        prove_init_delegation::<F, Cfg, D>(&data, &targets, &signed, &issuer_kp.pk)?;
+    let init_proof = prove_init_delegation::<F, Cfg, D>(&data, &targets, &signed, &issuer_kp.pk)?;
     let prove_time = prove_start.elapsed();
     println!("init_delegation: Proof generation time: {:?}", prove_time);
 
@@ -150,7 +159,10 @@ fn test_init_delegation() -> Result<()> {
     init_proof.verifier_data.verify(init_proof.proof.clone())?;
 
     let verify_time = verify_start.elapsed();
-    println!("init_delegation: Proof verification time: {:?}", verify_time);
+    println!(
+        "init_delegation: Proof verification time: {:?}",
+        verify_time
+    );
 
     // Sanity check
     assert!(!init_proof.proof.public_inputs.is_empty());
