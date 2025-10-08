@@ -1,23 +1,23 @@
 use crate::cred::credential::{generate_fixed_issuer_keypair, issue_fixed_dummy_credential, SignedECDSACredential};
-use crate::proofs::ecdsa::{fill_ecdsa_witness, make_ecdsa_circuit, register_pk_as_pi, ECDSACircuitTargets};
+use crate::proofs::ecdsa::{fill_ecdsa_witness, make_ecdsa_circuit, ECDSACircuitTargets};
+use crate::proofs::hash::{fill_sha256_circuit_witness, make_sha256_circuit};
 use crate::proofs::scalar_conversion::{fill_digest2scalar_witness, make_digest2scalar_circuit, Digest2ScalarTargets};
 use crate::utils::parsing::find_field_bit_indices;
 use anyhow::Result;
+use num_traits::zero;
 use plonky2::field::extension::Extendable;
+use plonky2::field::goldilocks_field::GoldilocksField;
+use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
 use plonky2::hash::hash_types::RichField;
 use plonky2::iop::target::Target;
-use plonky2::iop::witness::{PartialWitness};
+use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
-use plonky2::plonk::circuit_data::{CircuitConfig, VerifierCircuitData};
-use plonky2::plonk::config::{GenericConfig};
-use plonky2::plonk::proof::{ProofWithPublicInputs};
+use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData};
+use plonky2::plonk::config::{GenericConfig, KeccakGoldilocksConfig};
+use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2_ecdsa::curve::ecdsa::ECDSAPublicKey;
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use plonky2_sha256::circuit::{array_to_bits, Sha256Targets};
-use std::time::Instant;
-use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
-use plonky2::field::types::PrimeField;
-use crate::proofs::hash::{fill_sha256_circuit_witness, make_sha256_circuit};
 
 pub struct InitDelegationTargets {
     pub ecdsa_targets: ECDSACircuitTargets<Secp256K1, Secp256K1Scalar>, // We fix this to Secp256K1 for now.
@@ -30,10 +30,10 @@ pub struct InitDelegationTargets {
 pub struct InitDelegationProof<F: RichField + Extendable<D>, Cfg: GenericConfig<D, F=F>, const D: usize> {
     pub proof: ProofWithPublicInputs<F, Cfg, D>,
     pub verifier_data: VerifierCircuitData<F, Cfg, D>,
-    pub level_index_pis: usize,
+    //pub level_index_pis: usize, TODO: I dont think we need this, i.e., I removed it.
 }
 
-/// Build the init-delegation circuit (targets only), independent of any concrete credential.
+/// Create targets only (no build, no credential-bound data)
 pub fn make_init_delegation_circuit<F, Cfg, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
 ) -> Result<InitDelegationTargets>
@@ -48,7 +48,7 @@ where
     let msg_len_bits = dummy_msg_bits.len();
     let (rev_idx, rev_num_bytes) = find_field_bit_indices(&dummy_json, "cred_pk_sec1_compressed")?;
 
-    // ECDSA knowledge proof targets
+    // ECDSA knowledge proof targets. Note that this also registers issuer pk as public input!
     let ecdsa_targets = make_ecdsa_circuit::<F, Cfg, D>(builder);
 
     // Byte-array to scalar consistency targets for the credential hash
@@ -70,8 +70,29 @@ where
     })
 }
 
-/// Prove init delegation for a concrete credential and issuer public key.
+/// Build once without any credential-bound data
+pub fn build_init_delegation_circuit_data<F, Cfg, const D: usize>()
+    -> Result<(CircuitData<F, Cfg, D>, InitDelegationTargets)>
+where
+    F: RichField + Extendable<D>,
+    Cfg: GenericConfig<D, F = F>,
+{
+    let mut config = CircuitConfig::standard_ecc_config();
+    config.zero_knowledge = true;
+    let mut builder = CircuitBuilder::<F, D>::new(config);
+
+    // Create virtual targets
+    let targets = make_init_delegation_circuit::<F, Cfg, D>(&mut builder)?;
+
+    // Build circuit once
+    let data = builder.build::<Cfg>();
+    Ok((data, targets))
+}
+
+/// Prove using the built circuit and concrete inputs
 pub fn prove_init_delegation<F, Cfg, const D: usize>(
+    circuit: &CircuitData<F, Cfg, D>,
+    targets: &InitDelegationTargets,
     cred: &SignedECDSACredential,
     iss_pk: &ECDSAPublicKey<Secp256K1>,
 ) -> Result<InitDelegationProof<F, Cfg, D>>
@@ -79,81 +100,60 @@ where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F = F>,
 {
-    // Prepare the circuit builder with the same config as before.
-    let mut config = CircuitConfig::standard_ecc_config();
-    config.zero_knowledge = true;
-    let mut builder = CircuitBuilder::<F, D>::new(config);
+    // Prepare concrete inputs (off-circuit)
+    let cred_bytes_bits = array_to_bits(&cred.credential.to_bytes()?);
+    let cred_digest = cred.credential.hash_digest()?;
+    let cred_digest_bits = array_to_bits(&cred_digest);
 
-    // Build the circuit using a dummy credential to determine layout.
-    let targets = make_init_delegation_circuit::<F, Cfg, D>(&mut builder)?;
-
-    // Compute message/digest bits from the *real* credential to fill witnesses later.
-    let cred_data_bits_vec = array_to_bits(&cred.credential.to_bytes()?);
-    let cred_data_digest = cred.credential.hash_digest()?; // 32-byte SHA-256
-    let cred_digest_bits_vec = array_to_bits(&cred_data_digest);
-
-    // Build circuit data and fill witnesses.
+    // Fill witnesses for saved targets
     let mut pw = PartialWitness::new();
-
-    // 1) ECDSA knowledge of signature under issuer key for the credential hash
     fill_ecdsa_witness::<F, Cfg, D>(&targets.ecdsa_targets, &mut pw, cred, iss_pk)?;
+    fill_digest2scalar_witness(&targets.b2c_targets, &mut pw, &cred_digest, &cred.cred_hash)?;
+    fill_sha256_circuit_witness::<F, Cfg, D>(&targets.hash_targets, &mut pw, &cred_bytes_bits, &cred_digest_bits)?;
+    pw.set_target(targets.level_pi, F::ZERO)?; // fill level witness with zero
 
-    // 2) Conversion consistency: digest bytes to field scalar equals `cred_hash`
-    fill_digest2scalar_witness(
-        &targets.b2c_targets,
-        &mut pw,
-        &cred_data_digest,
-        &cred.cred_hash,
-    )?;
+    // Prove
+    let proof = circuit.prove(pw)?;
 
-    // 3) Preimage knowledge with selective reveal of the compressed public key
-    fill_sha256_circuit_witness::<F, Cfg, D>(
-        &targets.hash_targets,
-        &mut pw,
-        &cred_data_bits_vec,
-        &cred_digest_bits_vec,
-    )?;
-
-    let build_start = Instant::now();
-    let data = builder.build::<Cfg>();
-    println!("Init delegation circuit generation time: {:?}", build_start.elapsed());
-
-    let prove_start = Instant::now();
-    let proof = data.prove(pw)?;
-    println!("Init delegation proof generation time: {:?}", prove_start.elapsed());
-
-    let proof = InitDelegationProof {
+    Ok(InitDelegationProof {
         proof: proof.clone(),
-        verifier_data: data.verifier_data(),
-        // As we registered the issuer public key and the revealed preimage bytes as public input.
-        level_index_pis: 16 + targets.rev_num_bytes * 8, // TODO: Make this robust (create a wrapper for registering PIs)
-    };
-
-    Ok(proof)
+        verifier_data: circuit.verifier_data(),
+    })
 }
 
 #[test]
 fn test_init_delegation() -> Result<()> {
-    // Generic parameters
+    // Generics
     const D: usize = 2;
-    type Cfg = plonky2::plonk::config::PoseidonGoldilocksConfig;
+    type Cfg = KeccakGoldilocksConfig;
     type F = <Cfg as GenericConfig<D>>::F;
 
-    // 1) Generate a fixed issuer keypair and issue a signed dummy credential (schema-stable)
+    // === 1) Build once  ===
+    let build_start = std::time::Instant::now();
+    let (data, targets) =
+        build_init_delegation_circuit_data::<F, Cfg, D>()?;
+    let build_time = build_start.elapsed();
+    println!("init_delegation: Circuit build time: {:?}", build_time);
+
+    // === 2) Generate proof ===
     let issuer_kp = generate_fixed_issuer_keypair();
     let signed = issue_fixed_dummy_credential(&issuer_kp.sk)?;
 
-    // 2) Prove init delegation for that credential under the issuer public key
-    let init_proof = prove_init_delegation::<F, Cfg, D>(&signed, &issuer_kp.pk)?;
+    let prove_start = std::time::Instant::now();
+    let init_proof =
+        prove_init_delegation::<F, Cfg, D>(&data, &targets, &signed, &issuer_kp.pk)?;
+    let prove_time = prove_start.elapsed();
+    println!("init_delegation: Proof generation time: {:?}", prove_time);
 
-    // 3) Verify proof
+    // === 3) Verify proof ===
+    let verify_start = std::time::Instant::now();
     init_proof.verifier_data.verify(init_proof.proof.clone())?;
 
-    // Sanity check: public inputs should be non-empty and include the level PI we constrained to zero
-    assert!(
-        !init_proof.proof.public_inputs.is_empty(),
-        "public inputs should not be empty"
-    );
+    let verify_time = verify_start.elapsed();
+    println!("init_delegation: Proof verification time: {:?}", verify_time);
+
+    // Sanity check
+    assert!(!init_proof.proof.public_inputs.is_empty());
 
     Ok(())
 }
