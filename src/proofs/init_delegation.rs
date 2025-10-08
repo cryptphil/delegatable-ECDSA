@@ -14,8 +14,8 @@ use plonky2::hash::hash_types::RichField;
 use plonky2::iop::target::Target;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
-use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData};
-use plonky2::plonk::config::{GenericConfig, KeccakGoldilocksConfig};
+use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData, VerifierCircuitTarget};
+use plonky2::plonk::config::{AlgebraicHasher, GenericConfig, KeccakGoldilocksConfig, PoseidonGoldilocksConfig};
 use plonky2::plonk::proof::ProofWithPublicInputs;
 use plonky2_ecdsa::curve::ecdsa::ECDSAPublicKey;
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
@@ -27,6 +27,7 @@ pub struct InitDelegationTargets {
     pub hash_targets: Sha256Targets,
     pub level_pi: Target,
     pub rev_num_bytes: usize,
+    pub verifier_data_target: VerifierCircuitTarget, // we need this for recursion later on.
 }
 
 pub struct InitDelegationProof<
@@ -47,6 +48,9 @@ where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F = F>,
 {
+    // prepare for recursion. Not used in the initial case.
+    let verifier_data_target = builder.add_verifier_data_public_inputs();
+
     // Derive stable layout from a schema-stable dummy credential
     let dummy = issue_fixed_dummy_credential(&generate_fixed_issuer_keypair().sk)?;
     let dummy_json = dummy.credential.to_json()?;
@@ -73,6 +77,7 @@ where
         hash_targets,
         level_pi,
         rev_num_bytes,
+        verifier_data_target
     })
 }
 
@@ -105,6 +110,7 @@ pub fn prove_init_delegation<F, Cfg, const D: usize>(
 where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F = F>,
+    Cfg::Hasher: AlgebraicHasher<F>,
 {
     // Prepare concrete inputs (off-circuit)
     let cred_bytes_bits = array_to_bits(&cred.credential.to_bytes()?);
@@ -122,6 +128,7 @@ where
         &cred_digest_bits,
     )?;
     pw.set_target(targets.level_pi, F::ZERO)?; // fill level witness with zero
+    pw.set_verifier_data_target::<Cfg, D>(&targets.verifier_data_target, &circuit.verifier_only)?;
 
     // Prove
     let proof = circuit.prove(pw)?;
@@ -136,7 +143,7 @@ where
 fn test_init_delegation() -> Result<()> {
     // Generics
     const D: usize = 2;
-    type Cfg = KeccakGoldilocksConfig;
+    type Cfg = PoseidonGoldilocksConfig;
     type F = <Cfg as GenericConfig<D>>::F;
 
     // === 1) Build once  ===
