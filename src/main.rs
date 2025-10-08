@@ -1,4 +1,6 @@
 mod proofs;
+mod cred;
+mod utils;
 
 use plonky2::field::types::Field;
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};

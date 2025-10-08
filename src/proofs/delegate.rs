@@ -1,3 +1,4 @@
+use std::hash::Hash;
 use plonky2::field::extension::Extendable;
 use plonky2::hash::hash_types::RichField;
 use plonky2::iop::target::BoolTarget;
@@ -8,9 +9,15 @@ use anyhow::Result;
 use plonky2::gates::constant::ConstantGate;
 use plonky2::gates::gate::GateRef;
 use plonky2::plonk::circuit_builder::CircuitBuilder;
+use plonky2_ecdsa::gadgets::biguint::CircuitBuilderBiguint;
 use plonky2_ecdsa::gadgets::curve::CircuitBuilderCurve;
 use plonky2_ecdsa::gadgets::ecdsa::ECDSAPublicKeyTarget;
-use crate::proofs::ecdsa::register_pk_as_pi;
+use serde::Deserializer;
+use crate::cred::credential::{generate_fixed_issuer_keypair, issue_fixed_dummy_credential, CredentialData};
+use crate::proofs::ecdsa::{fill_ecdsa_witness, make_ecdsa_circuit, register_pk_as_pi};
+use crate::proofs::hash::make_sha256_circuit;
+use crate::proofs::scalar_conversion::fill_digest2scalar_witness;
+use crate::utils::parsing::find_field_bit_indices;
 
 /// Targets we need to fill witnesses for proving.
 struct RecursionTargets<const D: usize> {
@@ -31,17 +38,18 @@ where
     let config = CircuitConfig::standard_recursion_config();
     let mut builder = CircuitBuilder::<F, D>::new(config);
 
-    // PI layout: [pk_x_0, pk_x_1, pk_x_2, pk_x_3, pk_y_0, pk_y_1, pk_y_2, pk_y_3, level_target] // TODO: Double check this
+    // PI layout: [pk_x_0_limb, pk_x_1_limb, pk_x_2_limb, pk_x_3_limb, pk_y_0_limb, pk_y_1_limb, pk_y_2_limb, pk_y_3_limb, cred_hash, level_target] // TODO: Double check this
     let issuer_pk_target = ECDSAPublicKeyTarget(builder.add_virtual_affine_point_target());
     register_pk_as_pi::<F, C, D>(&mut builder, &issuer_pk_target); // TODO: Check how this effects PIs of the circuit. Should be 8 limbs?
 
+    let cred_hash = builder.add_virtual_hash_public_input(); // TODO: I think we dont need to register this as a PI as the make_sha256_circuit registers if we reveal that part of the cred.
     let level_target = builder.add_virtual_public_input();
 
     let verifier_data_target =builder.add_verifier_data_public_inputs();
 
     // Stabilized common data template for recursion; adjust PI count to match this circuit.
     let mut common_data = common_data_for_recursion::<F, C, D>();
-    common_data.num_public_inputs = builder.num_public_inputs();
+    common_data.num_public_inputs = builder.num_public_inputs(); // TODO: This needs to happen after all the PIs are registered.
 
     // Base vs recursive step selector.
     let verify_proofs = builder.add_virtual_bool_target_safe();
@@ -53,12 +61,37 @@ where
     let inner_pis = &inner.public_inputs;
 
     // Check level, i.e., level_target = prev_level_target + 1
-    let prev_level_target = inner_pis[8]; // 9th position
+    let prev_level_target = inner_pis[9]; // 10th position // TODO: Check this
     let one = builder.constant(F::ONE);
     let exp_level = builder.add(prev_level_target, one);
     builder.connect(exp_level, level_target);
 
-    // Add ECDSA Circuit
+    // Hash cred in circuit (full credential must be a priv input)
+    // Use a dummy credential to get input sizes.
+    let dummy_cred_json = issue_fixed_dummy_credential(&generate_fixed_issuer_keypair().sk)?.credential.to_json()?; // We just do this to get a proper dummy credential
+    let dummy_cred_bytes = dummy_cred_json.to_string().as_bytes()?;
+    let dummy_cred_bits = plonky2_sha256::circuit::array_to_bits(dummy_cred_bytes);
+
+    let (rev_idx, rev_num_bytes) = find_field_bit_indices(&dummy_cred_json, "cred_pk_sec1_compressed")?;
+    // make_sha256_circuit defines the credential hash to be the public input as we reveal it
+    let sha256_targets = make_sha256_circuit::<F, D>(&mut builder, dummy_cred_bits.len(), rev_idx, rev_num_bytes);
+    builder.connect(sha256_targets.digest)
+
+    // Add ECDSA Circuit (verify signature on hash of credential)
+    let ecdsa_targets = make_ecdsa_circuit::<F, C, D>(&mut builder);
+    builder.connect_affine_point(&ecdsa_targets.issuer_pk, &issuer_pk_target.0); // connect issuer public key to ecdsa circuit
+    builder.extension(ecdsa_targets.msg.value, cred_hash.elements[0].) // connect credential hash PI to ecdsa circuit
+
+    builder.connect_array(sha256_targets.message, &ecdsa_targets.msg)
+    ecdsa_targets.msg // TODO: Connect message (i.e. cred hash - public input?)
+    ecdsa_targets.sig // TODO: Connect signature (priv input)
+
+    builder.connect_biguint(ecdsa_targets.msg.value, );
+
+
+    fill_ecdsa_witness()
+
+
 
 }
 
