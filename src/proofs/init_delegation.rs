@@ -68,7 +68,9 @@ where
     let hash_targets = make_sha256_circuit::<F, D>(builder, msg_len_bits, rev_idx, rev_num_bytes);
 
     // Public input for the level L=0 with an enforced zero value
-    let level_pi = builder.add_virtual_public_input();
+    // Must be last target for recursion to work.
+    let level_pi = builder.add_virtual_public_input(); // One Target = One Field Element, i.e. 64bit in Goldilocks
+
     builder.assert_zero(level_pi);
 
     Ok(InitDelegationTargets {

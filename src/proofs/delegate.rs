@@ -3,12 +3,16 @@ use plonky2::field::extension::Extendable;
 use plonky2::hash::hash_types::RichField;
 use plonky2::iop::target::BoolTarget;
 use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData, CommonCircuitData, VerifierCircuitTarget};
-use plonky2::plonk::config::{AlgebraicHasher, GenericConfig};
+use plonky2::plonk::config::{AlgebraicHasher, GenericConfig, PoseidonGoldilocksConfig};
 use plonky2::plonk::proof::{ProofWithPublicInputsTarget, ProofWithPublicInputs};
 use anyhow::Result;
 use plonky2::gates::constant::ConstantGate;
 use plonky2::gates::gate::GateRef;
+use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
+use plonky2::recursion::dummy_circuit::cyclic_base_proof;
+use hashbrown::HashMap;
+
 use plonky2_ecdsa::gadgets::biguint::CircuitBuilderBiguint;
 use plonky2_ecdsa::gadgets::curve::CircuitBuilderCurve;
 use plonky2_ecdsa::gadgets::ecdsa::ECDSAPublicKeyTarget;
@@ -16,90 +20,144 @@ use serde::Deserializer;
 use crate::cred::credential::{generate_fixed_issuer_keypair, issue_fixed_dummy_credential, CredentialData};
 use crate::proofs::ecdsa::{fill_ecdsa_witness, make_ecdsa_circuit, register_pk_as_pi};
 use crate::proofs::hash::make_sha256_circuit;
+use crate::proofs::init_delegation::{build_init_delegation_circuit_data, prove_init_delegation};
 use crate::proofs::scalar_conversion::fill_digest2scalar_witness;
 use crate::utils::parsing::find_field_bit_indices;
 
 /// Targets we need to fill witnesses for proving.
-struct RecursionTargets<const D: usize> {
-    verify_proofs: BoolTarget,
-    inner: ProofWithPublicInputsTarget<D>,
+pub struct DelegationTargets<const D: usize> {
+    pub initial_selector: BoolTarget,
+    pub initial_proof: ProofWithPublicInputsTarget<D>,
+    pub delegation_proof: ProofWithPublicInputsTarget<D>,
+    pub outer_pi_slots: Vec<plonky2::iop::target::Target>,
     verifier_data_target: VerifierCircuitTarget,
 }
 
-fn build_delegation_circuit<
+pub fn build_delegation_circuit<F, C, const D: usize>(
+    // how many public inputs do you want to forward (must equal the PI count of both inner circuits)
+    forwarded_pi_len: usize,
+) -> (CircuitData<F, C, D>, DelegationTargets<D>)
+where
     F: RichField + Extendable<D>,
     C: GenericConfig<D, F = F> + 'static,
-    const D: usize,
->() -> (CircuitData<F, C, D>, CommonCircuitData<F, D>, RecursionTargets<D>)
-where
     C::Hasher: AlgebraicHasher<F>,
-    F: RichField + Extendable<D>,
 {
-    let config = CircuitConfig::standard_recursion_config();
-    let mut builder = CircuitBuilder::<F, D>::new(config);
+    let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
 
-    // PI layout: [pk_x_0_limb, pk_x_1_limb, pk_x_2_limb, pk_x_3_limb, pk_y_0_limb, pk_y_1_limb, pk_y_2_limb, pk_y_3_limb, cred_hash, level_target] // TODO: Double check this
-    let issuer_pk_target = ECDSAPublicKeyTarget(builder.add_virtual_affine_point_target());
-    register_pk_as_pi::<F, C, D>(&mut builder, &issuer_pk_target); // TODO: Check how this effects PIs of the circuit. Should be 8 limbs?
+    // 1) Reserve OUTER public inputs (forwarding slots) before freezing common.
+    let mut outer_pi_slots = Vec::with_capacity(forwarded_pi_len);
+    for _ in 0..forwarded_pi_len {
+        outer_pi_slots.push(builder.add_virtual_public_input());
+    }
 
-    let cred_hash = builder.add_virtual_hash_public_input(); // TODO: I think we dont need to register this as a PI as the make_sha256_circuit registers if we reveal that part of the cred.
-    let level_target = builder.add_virtual_public_input();
+    let verifier_data_target = builder.add_verifier_data_public_inputs();
 
-    let verifier_data_target =builder.add_verifier_data_public_inputs();
-
-    // Stabilized common data template for recursion; adjust PI count to match this circuit.
+    // 2) Freeze stabilized recursion shape for both inner proofs.
     let mut common_data = common_data_for_recursion::<F, C, D>();
-    common_data.num_public_inputs = builder.num_public_inputs(); // TODO: This needs to happen after all the PIs are registered.
+    common_data.num_public_inputs = builder.num_public_inputs();
 
-    // Base vs recursive step selector.
-    let verify_proofs = builder.add_virtual_bool_target_safe();
+    // 3) Allocate two virtual inner proofs with *identical* PI shape.
+    let initial_proof    = builder.add_virtual_proof_with_pis(&common_data);
+    let delegation_proof = builder.add_virtual_proof_with_pis(&common_data);
 
-    // Virtual proofs (inner) with public inputs of `common_data` shape.
-    let inner = builder.add_virtual_proof_with_pis(&common_data);
+    // 4) Wire OUTER PI slots to BOTH inner proofs' public inputs 1:1.
+    //assert_eq!(initial_proof.public_inputs.len(), forwarded_pi_len);
+    //assert_eq!(delegation_proof.public_inputs.len(), forwarded_pi_len);
+    let last = forwarded_pi_len - 1; // last slot is the delegation level
+    for i in 0..last {
+        builder.connect(outer_pi_slots[i], initial_proof.public_inputs[i]);
+        builder.connect(outer_pi_slots[i], delegation_proof.public_inputs[i]);
+    }
 
-    // Unpack PIs
-    let inner_pis = &inner.public_inputs;
+    // 5) Initial proof selector: true => verifies INIT PROOF, false => verifies DELEGATION PROOF
+    let initial_selector = builder.add_virtual_bool_target_safe();
+    let initial_selector_not    = builder.not(initial_selector);
 
-    // Check level, i.e., level_target = prev_level_target + 1
-    let prev_level_target = inner_pis[9]; // 10th position // TODO: Check this
-    let one = builder.constant(F::ONE);
-    let exp_level = builder.add(prev_level_target, one);
-    builder.connect(exp_level, level_target);
+    // 6) Constrain delegation level (last PI slot is the level)
+    let last = forwarded_pi_len - 1;
+    let outer_level         = outer_pi_slots[last];
+    let inner_init_level    = initial_proof.public_inputs[last];
+    let inner_deleg_level   = delegation_proof.public_inputs[last];
 
-    // Hash cred in circuit (full credential must be a priv input)
-    // Use a dummy credential to get input sizes.
-    let dummy_cred_json = issue_fixed_dummy_credential(&generate_fixed_issuer_keypair().sk)?.credential.to_json()?; // We just do this to get a proper dummy credential
-    let dummy_cred_bytes = dummy_cred_json.to_string().as_bytes()?;
-    let dummy_cred_bits = plonky2_sha256::circuit::array_to_bits(dummy_cred_bytes);
+    // inner_deleg_level + 1
+    let one                 = builder.one();
+    let inner_plus_one      = builder.add(inner_deleg_level, one);
 
-    let (rev_idx, rev_num_bytes) = find_field_bit_indices(&dummy_cred_json, "cred_pk_sec1_compressed")?;
-    // make_sha256_circuit defines the credential hash to be the public input as we reveal it
-    let sha256_targets = make_sha256_circuit::<F, D>(&mut builder, dummy_cred_bits.len(), rev_idx, rev_num_bytes);
-    builder.connect(sha256_targets.digest)
+    // expected_outer_level = if init { inner_init_level } else { inner_deleg_level + 1 }
+    let expected_outer_level = builder.select(initial_selector, inner_init_level, inner_plus_one);
 
-    // Add ECDSA Circuit (verify signature on hash of credential)
-    let ecdsa_targets = make_ecdsa_circuit::<F, C, D>(&mut builder);
-    builder.connect_affine_point(&ecdsa_targets.issuer_pk, &issuer_pk_target.0); // connect issuer public key to ecdsa circuit
-    builder.extension(ecdsa_targets.msg.value, cred_hash.elements[0].) // connect credential hash PI to ecdsa circuit
+    // Enforce outer level equals the branch-specific expectation
+    builder.connect(outer_level, expected_outer_level);
 
-    builder.connect_array(sha256_targets.message, &ecdsa_targets.msg)
-    ecdsa_targets.msg // TODO: Connect message (i.e. cred hash - public input?)
-    ecdsa_targets.sig // TODO: Connect signature (priv input)
+    // 7) Conditionally verify either proof (or dummy) with its own verifier data.
+    builder
+        .conditionally_verify_cyclic_proof_or_dummy::<C>(initial_selector, &initial_proof, &common_data)
+        .expect("init conditional verify failed");
+    builder
+        .conditionally_verify_cyclic_proof_or_dummy::<C>(initial_selector_not, &delegation_proof, &common_data)
+        .expect("delegation conditional verify failed");
 
-    builder.connect_biguint(ecdsa_targets.msg.value, );
+    // 8) Build outer circuit
+    let cd = builder.build::<C>();
 
-
-    fill_ecdsa_witness()
-
-
-
+    let targets = DelegationTargets {
+        initial_selector,
+        initial_proof,
+        delegation_proof,
+        outer_pi_slots,
+        verifier_data_target
+    };
+    (cd, targets)
 }
 
+fn prove_delegation_base<F, C, const D: usize>(
+    circuit: &CircuitData<F, C, D>,
+    common_data: &CommonCircuitData<F, D>,
+    initial_proof: &ProofWithPublicInputs<F, C, D>,
+    targets: &DelegationTargets<D>,
+) -> Result<ProofWithPublicInputs<F, C, D>>
+where
+    F: RichField + Extendable<D>,
+    C: GenericConfig<D, F = F> + 'static,
+    C::Hasher: AlgebraicHasher<F>,
+{
+    // Sanity: inner PI shape must match stabilized shape.
+    assert_eq!(
+        initial_proof.public_inputs.len(),
+        common_data.num_public_inputs,
+        "init proof PI len ({}) must equal stabilized PI count ({})",
+        initial_proof.public_inputs.len(),
+        common_data.num_public_inputs
+    );
+
+    // Build a dummy "delegation" proof whose PIs match the OUTER PIs.
+    // In base mode, the OUTER PIs equal the INIT inner PIs
+    let pi_map: HashMap<usize, F> = initial_proof
+        .public_inputs
+        .iter()
+        .copied()
+        .enumerate()
+        .collect();
+
+    let delegation_dummy_proof =
+        cyclic_base_proof(common_data, &circuit.verifier_only, pi_map);
+
+    let mut pw = PartialWitness::new();
+    pw.set_bool_target(targets.initial_selector, true)?;
+    pw.set_proof_with_pis_target::<C, D>(&targets.initial_proof, initial_proof)?;
+    pw.set_proof_with_pis_target::<C, D>(&targets.delegation_proof, &delegation_dummy_proof)?;
+    pw.set_verifier_data_target(&targets.verifier_data_target, &circuit.verifier_only)?;
+
+    let proof0 = circuit.prove(pw)?;
+    Ok(proof0)
+}
+
+/*
 /// Prove multiple delegation steps.
 fn prove_delegations<F, C, const D: usize>(
     circuit: &CircuitData<F, C, D>,
     common_data: &CommonCircuitData<F, D>,
-    targets: &RecursionTargets<D>,
+    targets: &DelegationTargets<D>,
     base_pis: &[F],
     num_delegations: usize,
 ) -> Result<Vec<ProofWithPublicInputs<F, C, D>>>
@@ -117,7 +175,7 @@ where
         proofs.push(next);
     }
     Ok(proofs)
-}
+}*/
 
 /// Pass-structured fixed-point common data constructor used by Plonky2 recursion utilities.
 fn common_data_for_recursion<
@@ -150,4 +208,49 @@ where
     builder.verify_proof::<C>(&proof, &verifier_data, &data.common);
     builder.add_gate_to_gate_set(GateRef::new(ConstantGate::new(num_consts)));
     builder.build::<C>().common
+}
+
+#[test]
+fn test_prove_delegation_base() -> Result<()> {
+    // Generics
+    const D: usize = 2;
+    type Cfg = PoseidonGoldilocksConfig;
+    type F = <Cfg as GenericConfig<D>>::F;
+
+    // --- Build init-delegation circuit and produce an init proof ---
+    let (init_cd, init_targets) = build_init_delegation_circuit_data::<F, Cfg, D>()?;
+
+    let issuer_kp = generate_fixed_issuer_keypair();
+    let signed = issue_fixed_dummy_credential(&issuer_kp.sk)?;
+
+    let init_proof = prove_init_delegation::<F, Cfg, D>(&init_cd, &init_targets, &signed, &issuer_kp.pk)?;
+
+    // The delegation wrapper must forward exactly the same number of PIs as the inner proof exposes.
+    let forwarded_pi_len = init_proof.proof.public_inputs.len();
+
+    // --- Build delegation (outer) circuit that forwards all PIs and enforces the level rule ---
+    let (deleg_cd, deleg_targets) = build_delegation_circuit::<F, Cfg, D>(forwarded_pi_len);
+
+    // Stabilized common data with matching PI count for cyclic verification utilities.
+    let mut common = common_data_for_recursion::<F, Cfg, D>();
+    common.num_public_inputs = forwarded_pi_len;
+
+    // --- Prove base step: verify INIT branch, delegation branch is dummy ---
+    let prove_start = std::time::Instant::now();
+    let outer_proof = prove_delegation_base::<F, Cfg, D>(
+        &deleg_cd,
+        &common,
+        &init_proof.proof,
+        &deleg_targets,
+    )?;
+    let prove_time = prove_start.elapsed();
+    println!("delegation(base): outer proof generation time: {:?}", prove_time);
+
+    // --- Verify outer proof ---
+    deleg_cd.verifier_data().verify(outer_proof.clone())?;
+
+    // Sanity: in base mode, the outer PIs should match the init proof's PIs (1:1 wiring).
+    assert_eq!(outer_proof.public_inputs, init_proof.proof.public_inputs);
+
+    Ok(())
 }

@@ -13,7 +13,7 @@ use plonky2_ecdsa::gadgets::nonnative::{CircuitBuilderNonNative, NonNativeTarget
 use plonky2_sha256::circuit::array_to_bits;
 use sha2::{Digest, Sha256};
 
-pub struct Digest2ScalarCircuit {
+pub struct Digest2ScalarTargets {
     pub digest_bits_targets: Vec<BoolTarget>,
     pub expected_scalar: NonNativeTarget<Secp256K1Scalar>,
 }
@@ -21,7 +21,7 @@ pub struct Digest2ScalarCircuit {
 /// Builds a circuit that packs a 32 Bytes digest into a `Secp256K1Scalar` as a nonnative target.
 pub fn make_digest2scalar_circuit<F: RichField + Extendable<D>, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
-) -> Digest2ScalarCircuit {
+) -> Digest2ScalarTargets {
     let digest_targets: Vec<BoolTarget> = (0..256)
         .map(|_| builder.add_virtual_bool_target_safe())
         .collect();
@@ -40,14 +40,14 @@ pub fn make_digest2scalar_circuit<F: RichField + Extendable<D>, const D: usize>(
         builder.connect(limb, expected_scalar.value.limbs[limb_idx].0);
     }
 
-    Digest2ScalarCircuit {
+    Digest2ScalarTargets {
         digest_bits_targets: digest_targets,
         expected_scalar,
     }
 }
 
 pub fn fill_digest2scalar_witness<F, const D: usize>(
-    circuit: &Digest2ScalarCircuit,
+    circuit: &Digest2ScalarTargets,
     pw: &mut PartialWitness<F>,
     digest: &[u8; 32],
     scalar: &Secp256K1Scalar,

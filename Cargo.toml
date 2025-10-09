@@ -30,6 +30,7 @@ env_logger = "0.11.8"
 rand = "0.8"
 rand_core = "0.6.4"
 num = "0.4.3"
+hashbrown = "0.14.5"
 
 [patch."https://github.com/0xPolygonZero/plonky2"]
 plonky2_field = { git = "https://github.com/sommer-ph/plonky2", package = "plonky2_field" }

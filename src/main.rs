@@ -7,8 +7,8 @@ use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
 use plonky2::recursion::cyclic_recursion::check_cyclic_proof_verifier_data;
 use std::time::SystemTime;
 
-fn main() -> Result<()> {
-    const D: usize = 2;
+fn main() {
+    /*const D: usize = 2;
     type C = PoseidonGoldilocksConfig;
     type F = <C as GenericConfig<D>>::F;
 
@@ -41,6 +41,6 @@ fn main() -> Result<()> {
             println!("Verified layer {} proof.", i);
         }
     }
-
-    Ok(())
+*/
 }
+
