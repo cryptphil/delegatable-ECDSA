@@ -6,7 +6,6 @@ use crate::proofs::hash::{fill_sha256_circuit_witness, make_sha256_circuit};
 use crate::proofs::scalar_conversion::{
     fill_digest2scalar_witness, make_digest2scalar_circuit, Digest2ScalarTargets,
 };
-use crate::utils::recursion::get_dummy_proof;
 use crate::utils::parsing::find_field_bit_indices;
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
