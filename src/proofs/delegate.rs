@@ -1,42 +1,38 @@
 use std::hash::Hash;
 use plonky2::field::extension::Extendable;
 use plonky2::hash::hash_types::RichField;
-use plonky2::iop::target::BoolTarget;
 use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData, CommonCircuitData, VerifierCircuitTarget};
 use plonky2::plonk::config::{AlgebraicHasher, GenericConfig, PoseidonGoldilocksConfig};
 use plonky2::plonk::proof::{ProofWithPublicInputsTarget, ProofWithPublicInputs};
 use anyhow::Result;
-use plonky2::gates::constant::ConstantGate;
-use plonky2::gates::gate::GateRef;
+use hashbrown::HashMap;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
+use plonky2::field::types::Field;
+use plonky2::iop::target::Target;
 use plonky2::recursion::dummy_circuit::cyclic_base_proof;
-use hashbrown::HashMap;
-
-use plonky2_ecdsa::gadgets::biguint::CircuitBuilderBiguint;
-use plonky2_ecdsa::gadgets::curve::CircuitBuilderCurve;
-use plonky2_ecdsa::gadgets::ecdsa::ECDSAPublicKeyTarget;
-use serde::Deserializer;
-use crate::cred::credential::{generate_fixed_issuer_keypair, issue_fixed_dummy_credential, CredentialData};
-use crate::proofs::ecdsa::{fill_ecdsa_witness, make_ecdsa_circuit, register_pk_as_pi};
-use crate::proofs::hash::make_sha256_circuit;
-use crate::proofs::init_delegation::{build_init_delegation_circuit_data, prove_init_delegation};
-use crate::proofs::scalar_conversion::fill_digest2scalar_witness;
-use crate::utils::parsing::find_field_bit_indices;
+use crate::cred::credential::{generate_fixed_issuer_keypair, issue_fixed_dummy_credential};
+use crate::proofs::init_delegation::{build_init_delegation_circuit, prove_init_delegation};
+use crate::utils::recursion::{common_data_for_recursion, get_dummy_proof};
 
 /// Targets we need to fill witnesses for proving.
 pub struct DelegationTargets<const D: usize> {
-    pub initial_selector: BoolTarget,
-    pub initial_proof: ProofWithPublicInputsTarget<D>,
-    pub delegation_proof: ProofWithPublicInputsTarget<D>,
-    pub outer_pi_slots: Vec<plonky2::iop::target::Target>,
-    verifier_data_target: VerifierCircuitTarget,
+    pub outer_pis: Vec<Target>,
+    pub level_idx: usize, // position of the delegation level in pis
+
+    pub inner_proof: ProofWithPublicInputsTarget<D>,
+    pub verifier_data_target: VerifierCircuitTarget, // VK for recursion circuit (as PIs)
+
+    pub base_proof: ProofWithPublicInputsTarget<D>,
+    pub base_verifier_data_target: VerifierCircuitTarget,  // VK for base circuit (private)
 }
 
+/// Build the delegation circuit.
+/// - `base_common` is the `CommonCircuitData` of your INIT circuit (the base case).
+/// - Returns the OUTER circuit and its targets.
 pub fn build_delegation_circuit<F, C, const D: usize>(
-    // how many public inputs do you want to forward (must equal the PI count of both inner circuits)
-    forwarded_pi_len: usize,
-) -> (CircuitData<F, C, D>, DelegationTargets<D>)
+    base_common: &CommonCircuitData<F, D>,
+)  -> (CircuitData<F, C, D>, CommonCircuitData<F, D>, DelegationTargets<D>)
 where
     F: RichField + Extendable<D>,
     C: GenericConfig<D, F = F> + 'static,
@@ -44,213 +40,218 @@ where
 {
     let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
 
-    // 1) Reserve OUTER public inputs (forwarding slots) before freezing common.
-    let mut outer_pi_slots = Vec::with_capacity(forwarded_pi_len);
-    for _ in 0..forwarded_pi_len {
-        outer_pi_slots.push(builder.add_virtual_public_input());
-    }
+    // We require the delegation circuit to expose the same public inputs as the base circuit.
+    let n_pi = base_common.num_public_inputs;
+    assert!(n_pi > 0, "expected at least one public input (level)");
+    let level_idx = n_pi - 1;
 
+    // Outer public inputs (these will be *forwarded* from base/inner).
+    let mut outer_pis = Vec::with_capacity(n_pi);
+    for _ in 0..n_pi {
+        outer_pis.push(builder.add_virtual_public_input());
+    }
+    let level = outer_pis[level_idx];
+
+    // Expose recursion VK as public inputs (needed for cyclic recursion)
     let verifier_data_target = builder.add_verifier_data_public_inputs();
 
-    // 2) Freeze stabilized recursion shape for both inner proofs.
-    let mut common_data = common_data_for_recursion::<F, C, D>();
-    common_data.num_public_inputs = builder.num_public_inputs();
+    // Common data for the recursive (inner) proof — must match *this* outer shape.
+    let mut cyclic_common = common_data_for_recursion::<F, C, D>();
+    cyclic_common.num_public_inputs = builder.num_public_inputs();
 
-    // 3) Allocate two virtual inner proofs with *identical* PI shape.
-    let initial_proof    = builder.add_virtual_proof_with_pis(&common_data);
-    let delegation_proof = builder.add_virtual_proof_with_pis(&common_data);
+    // Proof targets:
+    //   - inner: previous delegation proof (same shape as this circuit)
+    //   - base:  init (base) proof
+    let inner = builder.add_virtual_proof_with_pis(&cyclic_common);
+    let base = builder.add_virtual_proof_with_pis(base_common);
 
-    // 4) Wire OUTER PI slots to BOTH inner proofs' public inputs 1:1.
-    //assert_eq!(initial_proof.public_inputs.len(), forwarded_pi_len);
-    //assert_eq!(delegation_proof.public_inputs.len(), forwarded_pi_len);
-    let last = forwarded_pi_len - 1; // last slot is the delegation level
-    for i in 0..last {
-        builder.connect(outer_pi_slots[i], initial_proof.public_inputs[i]);
-        builder.connect(outer_pi_slots[i], delegation_proof.public_inputs[i]);
+    let base_verifier_data_target =
+        builder.add_virtual_verifier_data(base_common.config.fri_config.cap_height);
+
+    // Select which branch to verify based on level == 0
+    let zero = builder.zero();
+    let one = builder.one();
+    let is_base = builder.is_equal(level, zero);
+    let not_base = builder.not(is_base);
+
+    // Forward PIs: for all but the 'level' position, forward from base vs inner.
+    for i in 0..level_idx {
+        let selected = builder.select(is_base, base.public_inputs[i], inner.public_inputs[i]);
+        builder.connect(outer_pis[i], selected);
     }
 
-    // 5) Initial proof selector: true => verifies INIT PROOF, false => verifies DELEGATION PROOF
-    let initial_selector = builder.add_virtual_bool_target_safe();
-    let initial_selector_not    = builder.not(initial_selector);
+    // Level rule:
+    //   If base: level == 0
+    //   Else:   level == inner_level + 1
+    let inner_level = inner.public_inputs[level_idx];
+    let next_level_if_rec = builder.add(inner_level, one);
+    let expected_level = builder.select(is_base, zero, next_level_if_rec);
+    builder.connect(level, expected_level);
 
-    // 6) Constrain delegation level (last PI slot is the level)
-    let last = forwarded_pi_len - 1;
-    let outer_level         = outer_pi_slots[last];
-    let inner_init_level    = initial_proof.public_inputs[last];
-    let inner_deleg_level   = delegation_proof.public_inputs[last];
-
-    // inner_deleg_level + 1
-    let one                 = builder.one();
-    let inner_plus_one      = builder.add(inner_deleg_level, one);
-
-    // expected_outer_level = if init { inner_init_level } else { inner_deleg_level + 1 }
-    let expected_outer_level = builder.select(initial_selector, inner_init_level, inner_plus_one);
-
-    // Enforce outer level equals the branch-specific expectation
-    builder.connect(outer_level, expected_outer_level);
-
-    // 7) Conditionally verify either proof (or dummy) with its own verifier data.
+    // Conditional verification:
+    // - Verify INNER (previous delegation) iff NOT base, otherwise allow dummy.
+    builder.conditionally_verify_cyclic_proof_or_dummy::<C>(not_base, &inner, &cyclic_common).unwrap();
+    // - Verify BASE proof iff is_base, otherwise allow dummy.
     builder
-        .conditionally_verify_cyclic_proof_or_dummy::<C>(initial_selector, &initial_proof, &common_data)
-        .expect("init conditional verify failed");
-    builder
-        .conditionally_verify_cyclic_proof_or_dummy::<C>(initial_selector_not, &delegation_proof, &common_data)
-        .expect("delegation conditional verify failed");
+        .conditionally_verify_proof_or_dummy::<C>(is_base, &base, &base_verifier_data_target, base_common).unwrap();
 
-    // 8) Build outer circuit
     let cd = builder.build::<C>();
 
     let targets = DelegationTargets {
-        initial_selector,
-        initial_proof,
-        delegation_proof,
-        outer_pi_slots,
-        verifier_data_target
+        outer_pis,
+        base_proof: base,
+        inner_proof: inner,
+        level_idx,
+        verifier_data_target,
+        base_verifier_data_target
     };
-    (cd, targets)
+    (cd, cyclic_common, targets)
 }
 
-fn prove_delegation_base<F, C, const D: usize>(
-    circuit: &CircuitData<F, C, D>,
-    common_data: &CommonCircuitData<F, D>,
-    initial_proof: &ProofWithPublicInputs<F, C, D>,
-    targets: &DelegationTargets<D>,
+/// Prove the *base* outer step (level == 0).
+/// Verifies the INIT proof; the inner (delegation) branch is dummy.
+pub fn prove_delegation_base<F, C, const D: usize>(
+    del_circuit: &CircuitData<F, C, D>,
+    del_targets: &DelegationTargets<D>,
+    base_circuit: &CircuitData<F, C, D>,
+    base_proof: &ProofWithPublicInputs<F, C, D>,
 ) -> Result<ProofWithPublicInputs<F, C, D>>
 where
     F: RichField + Extendable<D>,
     C: GenericConfig<D, F = F> + 'static,
     C::Hasher: AlgebraicHasher<F>,
 {
-    // Sanity: inner PI shape must match stabilized shape.
+    // Outer PIs must match the base proof's PI shape.
+    let n_outer = del_targets.outer_pis.len();
     assert_eq!(
-        initial_proof.public_inputs.len(),
-        common_data.num_public_inputs,
-        "init proof PI len ({}) must equal stabilized PI count ({})",
-        initial_proof.public_inputs.len(),
-        common_data.num_public_inputs
+        base_proof.public_inputs.len(),
+        n_outer,
+        "PI shape mismatch: base_proof has {}, outer expects {}",
+        base_proof.public_inputs.len(),
+        n_outer
     );
 
-    // Build a dummy "delegation" proof whose PIs match the OUTER PIs.
-    // In base mode, the OUTER PIs equal the INIT inner PIs
-    let pi_map: HashMap<usize, F> = initial_proof
-        .public_inputs
-        .iter()
-        .copied()
-        .enumerate()
-        .collect();
-
-    let delegation_dummy_proof =
-        cyclic_base_proof(common_data, &circuit.verifier_only, pi_map);
-
     let mut pw = PartialWitness::new();
-    pw.set_bool_target(targets.initial_selector, true)?;
-    pw.set_proof_with_pis_target::<C, D>(&targets.initial_proof, initial_proof)?;
-    pw.set_proof_with_pis_target::<C, D>(&targets.delegation_proof, &delegation_dummy_proof)?;
-    pw.set_verifier_data_target(&targets.verifier_data_target, &circuit.verifier_only)?;
 
-    let proof0 = circuit.prove(pw)?;
-    Ok(proof0)
+    // Forward all outer public inputs 1:1 (includes level at last index, which is 0 in base).
+    for i in 0..n_outer {
+        pw.set_target(del_targets.outer_pis[i], base_proof.public_inputs[i])?;
+    }
+
+    let mut overrides: HashMap<usize, F> = HashMap::new();
+    overrides.insert(del_targets.level_idx, base_proof.public_inputs[del_targets.level_idx]);
+    let del_proof_dummy = cyclic_base_proof::<F, C, D>(
+        &del_circuit.common,
+        &del_circuit.verifier_only,
+        overrides,
+    );
+
+    pw.set_proof_with_pis_target::<C, D>(&del_targets.base_proof, base_proof)?;
+    pw.set_proof_with_pis_target::<C, D>(&del_targets.inner_proof, &del_proof_dummy)?;
+    pw.set_verifier_data_target(&del_targets.verifier_data_target, &del_circuit.verifier_only)?;
+    pw.set_verifier_data_target(&del_targets.base_verifier_data_target, &base_circuit.verifier_only)?;
+
+    Ok(del_circuit.prove(pw)?)
 }
 
-/*
-/// Prove multiple delegation steps.
-fn prove_delegations<F, C, const D: usize>(
-    circuit: &CircuitData<F, C, D>,
-    common_data: &CommonCircuitData<F, D>,
-    targets: &DelegationTargets<D>,
-    base_pis: &[F],
-    num_delegations: usize,
-) -> Result<Vec<ProofWithPublicInputs<F, C, D>>>
+/// Prove a *recursive* delegation step (level > 0).
+/// Verifies the previous OUTER proof and enforces `level = prev_level + 1`.
+/// The base (init) branch is dummy here.
+pub fn prove_delegation_step<F, C, const D: usize>(
+    del_circuit: &CircuitData<F, C, D>,
+    del_targets: &DelegationTargets<D>,
+    base_circuit: &CircuitData<F, C, D>,
+    prev_del_proof: &ProofWithPublicInputs<F, C, D>,
+) -> Result<ProofWithPublicInputs<F, C, D>>
 where
     F: RichField + Extendable<D>,
     C: GenericConfig<D, F = F> + 'static,
     C::Hasher: AlgebraicHasher<F>,
 {
-    let mut proofs = Vec::with_capacity(num_delegations + 1);
-    let base = prove_init_delegation::<F, C, D>(circuit, common_data, targets, base_pis)?;
-    proofs.push(base);
+    // Only the OUTER PIs (not the VK PIs)
+    let n_outer = del_targets.outer_pis.len();
+    let lvl_idx = del_targets.level_idx;
 
-    for _ in 0..num_delegations {
-        let next = prove_delegation_step::<F, C, D>(circuit, targets, proofs.last().unwrap())?;
-        proofs.push(next);
+    // Forward all outer PIs; increment delegation level
+    let mut next_pis = prev_del_proof.public_inputs[..n_outer].to_vec();
+    next_pis[lvl_idx] = next_pis[lvl_idx] + F::ONE;
+
+    let mut pw = PartialWitness::new();
+    for i in 0..n_outer {
+        pw.set_target(del_targets.outer_pis[i], next_pis[i]);
     }
-    Ok(proofs)
-}*/
 
-/// Pass-structured fixed-point common data constructor used by Plonky2 recursion utilities.
-fn common_data_for_recursion<
-    F: RichField + Extendable<D>,
-    C: GenericConfig<D, F = F> + 'static,
-    const D: usize,
->() -> CommonCircuitData<F, D>
-where
-    C::Hasher: AlgebraicHasher<F>,
-{
-    let config = CircuitConfig::standard_recursion_config();
-    let builder = CircuitBuilder::<F, D>::new(config);
-    let data = builder.build::<C>();
+    // Proofs: inner = previous outer (real); base = dummy (unused in this branch)
+    let base_dummy = get_dummy_proof::<F, C, D>(base_circuit);
+    pw.set_proof_with_pis_target::<C, D>(&del_targets.inner_proof, prev_del_proof)?;
+    pw.set_proof_with_pis_target::<C, D>(&del_targets.base_proof, &base_dummy)?;
+    pw.set_verifier_data_target(&del_targets.verifier_data_target, &del_circuit.verifier_only)?;
+    pw.set_verifier_data_target::<C, D>(&del_targets.base_verifier_data_target, &base_circuit.verifier_only)?;
 
-    let config = CircuitConfig::standard_recursion_config();
-    let mut builder = CircuitBuilder::<F, D>::new(config);
-    let proof = builder.add_virtual_proof_with_pis(&data.common);
-    let verifier_data = builder.add_virtual_verifier_data(data.common.config.fri_config.cap_height);
-    builder.verify_proof::<C>(&proof, &verifier_data, &data.common);
-    builder.verify_proof::<C>(&proof, &verifier_data, &data.common);
-    let data = builder.build::<C>();
-
-    let config = CircuitConfig::standard_recursion_config();
-    let num_consts = config.num_constants;
-    let mut builder = CircuitBuilder::<F, D>::new(config);
-    let proof = builder.add_virtual_proof_with_pis(&data.common);
-    let verifier_data = builder.add_virtual_verifier_data(data.common.config.fri_config.cap_height);
-    builder.verify_proof::<C>(&proof, &verifier_data, &data.common);
-    builder.verify_proof::<C>(&proof, &verifier_data, &data.common);
-    builder.verify_proof::<C>(&proof, &verifier_data, &data.common);
-    builder.add_gate_to_gate_set(GateRef::new(ConstantGate::new(num_consts)));
-    builder.build::<C>().common
+    let proof = del_circuit.prove(pw)?;
+    Ok(proof)
 }
 
 #[test]
-fn test_prove_delegation_base() -> Result<()> {
-    // Generics
+fn test_delegation_flow() -> anyhow::Result<()> {
     const D: usize = 2;
     type Cfg = PoseidonGoldilocksConfig;
     type F = <Cfg as GenericConfig<D>>::F;
 
-    // --- Build init-delegation circuit and produce an init proof ---
-    let (init_cd, init_targets) = build_init_delegation_circuit_data::<F, Cfg, D>()?;
+    // Build init-delegation circuit and produce a real init proof.
+    let (init_cd, init_targets) = build_init_delegation_circuit::<F, Cfg, D>()?;
+    let issuer = generate_fixed_issuer_keypair();
+    let signed = issue_fixed_dummy_credential(&issuer.sk)?;
+    let init_proof =
+        prove_init_delegation::<F, Cfg, D>(&init_cd, &init_targets, &signed, &issuer.pk)?;
 
-    let issuer_kp = generate_fixed_issuer_keypair();
-    let signed = issue_fixed_dummy_credential(&issuer_kp.sk)?;
+    // Build delegation wrapper using the INIT common data (PI shape source).
+    let (outer_cd, _del_common, targets) =
+        build_delegation_circuit::<F, Cfg, D>(&init_cd.common);
 
-    let init_proof = prove_init_delegation::<F, Cfg, D>(&init_cd, &init_targets, &signed, &issuer_kp.pk)?;
+    // PI shape sanity: outer expects the same number of PIs as the base/init proof exposes.
+    assert_eq!(
+        targets.outer_pis.len(),
+        init_proof.proof.public_inputs.len(),
+        "outer PI count must match base proof PIs"
+    );
 
-    // The delegation wrapper must forward exactly the same number of PIs as the inner proof exposes.
-    let forwarded_pi_len = init_proof.proof.public_inputs.len();
-
-    // --- Build delegation (outer) circuit that forwards all PIs and enforces the level rule ---
-    let (deleg_cd, deleg_targets) = build_delegation_circuit::<F, Cfg, D>(forwarded_pi_len);
-
-    // Stabilized common data with matching PI count for cyclic verification utilities.
-    let mut common = common_data_for_recursion::<F, Cfg, D>();
-    common.num_public_inputs = forwarded_pi_len;
-
-    // --- Prove base step: verify INIT branch, delegation branch is dummy ---
-    let prove_start = std::time::Instant::now();
-    let outer_proof = prove_delegation_base::<F, Cfg, D>(
-        &deleg_cd,
-        &common,
+    // Base outer proof (level = 0) — verifies init proof.
+    let base_outer = prove_delegation_base::<F, Cfg, D>(
+        &outer_cd,
+        &targets,
+        &init_cd,
         &init_proof.proof,
-        &deleg_targets,
     )?;
-    let prove_time = prove_start.elapsed();
-    println!("delegation(base): outer proof generation time: {:?}", prove_time);
+    outer_cd.verifier_data().verify(base_outer.clone())?;
+    assert_eq!(base_outer.public_inputs[targets.level_idx], F::ZERO);
 
-    // --- Verify outer proof ---
-    deleg_cd.verifier_data().verify(outer_proof.clone())?;
+    // Step 1 — verifies previous outer proof, increments level to 1.
+    let step1 = prove_delegation_step::<F, Cfg, D>(
+        &outer_cd,
+        &targets,
+        &init_cd,      // pass base circuit for the dummy in the disabled branch
+        &base_outer,
+    )?;
+    outer_cd.verifier_data().verify(step1.clone())?;
+    assert_eq!(step1.public_inputs[targets.level_idx], F::ONE);
 
-    // Sanity: in base mode, the outer PIs should match the init proof's PIs (1:1 wiring).
-    assert_eq!(outer_proof.public_inputs, init_proof.proof.public_inputs);
+    // Step 2 — level becomes 2.
+    let step2 = prove_delegation_step::<F, Cfg, D>(
+        &outer_cd,
+        &targets,
+        &init_cd,
+        &step1,
+    )?;
+    outer_cd.verifier_data().verify(step2.clone())?;
+    assert_eq!(step2.public_inputs[targets.level_idx], F::from_canonical_u64(2));
+
+    // Forwarding sanity: all non-level PIs are forwarded unchanged each step.
+    for i in 0..targets.level_idx {
+        assert_eq!(base_outer.public_inputs[i], init_proof.proof.public_inputs[i]);
+        assert_eq!(step1.public_inputs[i],      base_outer.public_inputs[i]);
+        assert_eq!(step2.public_inputs[i],      step1.public_inputs[i]);
+    }
 
     Ok(())
 }

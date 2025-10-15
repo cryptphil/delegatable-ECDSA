@@ -6,9 +6,9 @@ use crate::proofs::hash::{fill_sha256_circuit_witness, make_sha256_circuit};
 use crate::proofs::scalar_conversion::{
     fill_digest2scalar_witness, make_digest2scalar_circuit, Digest2ScalarTargets,
 };
+use crate::utils::recursion::get_dummy_proof;
 use crate::utils::parsing::find_field_bit_indices;
 use anyhow::Result;
-use hashbrown::HashMap;
 use plonky2::field::extension::Extendable;
 use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
 use plonky2::field::types::Field;
@@ -19,7 +19,7 @@ use plonky2::plonk::circuit_builder::CircuitBuilder;
 use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData};
 use plonky2::plonk::config::{AlgebraicHasher, GenericConfig, PoseidonGoldilocksConfig};
 use plonky2::plonk::proof::ProofWithPublicInputs;
-use plonky2::recursion::dummy_circuit::{dummy_circuit, dummy_proof};
+use plonky2::recursion::dummy_circuit::{dummy_circuit};
 use plonky2_ecdsa::curve::ecdsa::ECDSAPublicKey;
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use plonky2_sha256::circuit::{array_to_bits, Sha256Targets};
@@ -134,23 +134,6 @@ where
     })
 }
 
-/// Create a deterministic "dummy" base proof.
-pub fn make_init_delegation_dummy_proof<F, C, const D: usize>(
-    circuit: &CircuitData<F, C, D>,
-) -> ProofWithPublicInputs<F, C, D>
-where
-    F: RichField + Extendable<D>,
-    C: GenericConfig<D, F = F>,
-    C::Hasher: AlgebraicHasher<F>,
-{
-    let overrides: HashMap<usize, F> = HashMap::new(); // all public inputs default to 0
-    dummy_proof::<F, C, D>(
-        &dummy_circuit::<F, C, D>(&circuit.common),
-        overrides,
-    )
-        .expect("failed to create dummy proof")
-}
-
 #[test]
 fn test_init_delegation() -> Result<()> {
     // Generics
@@ -200,7 +183,7 @@ fn test_init_delegation_dummy() -> anyhow::Result<()> {
     let (real_cd, _targets) = build_init_delegation_circuit::<F, Cfg, D>()?;
 
     // Create a dummy proof matching the circuit shape (all PIs = 0 by default)
-    let dummy_proof = make_init_delegation_dummy_proof::<F, Cfg, D>(&real_cd);
+    let dummy_proof = get_dummy_proof::<F, Cfg, D>(&real_cd);
 
     // Public inputs length matches the real circuit; all zeros.
     assert_eq!(
