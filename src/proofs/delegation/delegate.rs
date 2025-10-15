@@ -193,7 +193,7 @@ where
 }
 
 #[test]
-fn test_delegation_flow() -> anyhow::Result<()> {
+fn test_delegation_flow() -> Result<()> {
     const D: usize = 2;
     type Cfg = PoseidonGoldilocksConfig;
     type F = <Cfg as GenericConfig<D>>::F;

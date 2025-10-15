@@ -2,6 +2,7 @@ use crate::cred::credential::SignedECDSACredential;
 #[cfg(test)]
 use crate::cred::credential::{generate_issuer_keypair, issue_fixed_dummy_credential};
 use crate::utils::parsing::set_nonnative_target;
+
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
 use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
