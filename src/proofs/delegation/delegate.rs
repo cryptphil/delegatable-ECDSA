@@ -12,7 +12,7 @@ use plonky2::field::types::Field;
 use plonky2::iop::target::Target;
 use plonky2::recursion::dummy_circuit::cyclic_base_proof;
 use crate::cred::credential::{generate_fixed_issuer_keypair, issue_fixed_dummy_credential};
-use crate::proofs::init_delegation::{build_init_delegation_circuit, prove_init_delegation};
+use crate::proofs::delegation::initialize::{build_init_delegation_circuit, prove_init_delegation};
 use crate::utils::recursion::{common_data_for_recursion, get_dummy_proof};
 
 /// Targets we need to fill witnesses for proving.
@@ -199,56 +199,56 @@ fn test_delegation_flow() -> anyhow::Result<()> {
     type F = <Cfg as GenericConfig<D>>::F;
 
     // Build init-delegation circuit and produce a real init proof.
-    let (init_cd, init_targets) = build_init_delegation_circuit::<F, Cfg, D>()?;
-    let issuer = generate_fixed_issuer_keypair();
-    let signed = issue_fixed_dummy_credential(&issuer.sk)?;
-    let init_proof =
-        prove_init_delegation::<F, Cfg, D>(&init_cd, &init_targets, &signed, &issuer.pk)?;
+    let (initial_delegation_circuit, initial_delegation_targets) = build_init_delegation_circuit::<F, Cfg, D>()?;
+    let issuer_keypair = generate_fixed_issuer_keypair();
+    let signed_cred = issue_fixed_dummy_credential(&issuer_keypair.sk)?;
+    let init_del_proof =
+        prove_init_delegation::<F, Cfg, D>(&initial_delegation_circuit, &initial_delegation_targets, &signed_cred, &issuer_keypair.pk)?;
 
     // Build delegation wrapper using the INIT common data (PI shape source).
-    let (outer_cd, _del_common, targets) =
-        build_delegation_circuit::<F, Cfg, D>(&init_cd.common);
+    let (delegation_circuit, _del_common, delegation_targets) =
+        build_delegation_circuit::<F, Cfg, D>(&initial_delegation_circuit.common);
 
     // PI shape sanity: outer expects the same number of PIs as the base/init proof exposes.
     assert_eq!(
-        targets.outer_pis.len(),
-        init_proof.proof.public_inputs.len(),
+        delegation_targets.outer_pis.len(),
+        init_del_proof.proof.public_inputs.len(),
         "outer PI count must match base proof PIs"
     );
 
     // Base outer proof (level = 0) — verifies init proof.
     let base_outer = prove_delegation_base::<F, Cfg, D>(
-        &outer_cd,
-        &targets,
-        &init_cd,
-        &init_proof.proof,
+        &delegation_circuit,
+        &delegation_targets,
+        &initial_delegation_circuit,
+        &init_del_proof.proof,
     )?;
-    outer_cd.verifier_data().verify(base_outer.clone())?;
-    assert_eq!(base_outer.public_inputs[targets.level_idx], F::ZERO);
+    delegation_circuit.verifier_data().verify(base_outer.clone())?;
+    assert_eq!(base_outer.public_inputs[delegation_targets.level_idx], F::ZERO);
 
     // Step 1 — verifies previous outer proof, increments level to 1.
     let step1 = prove_delegation_step::<F, Cfg, D>(
-        &outer_cd,
-        &targets,
-        &init_cd,      // pass base circuit for the dummy in the disabled branch
+        &delegation_circuit,
+        &delegation_targets,
+        &initial_delegation_circuit,      // pass base circuit for the dummy in the disabled branch
         &base_outer,
     )?;
-    outer_cd.verifier_data().verify(step1.clone())?;
-    assert_eq!(step1.public_inputs[targets.level_idx], F::ONE);
+    delegation_circuit.verifier_data().verify(step1.clone())?;
+    assert_eq!(step1.public_inputs[delegation_targets.level_idx], F::ONE);
 
     // Step 2 — level becomes 2.
     let step2 = prove_delegation_step::<F, Cfg, D>(
-        &outer_cd,
-        &targets,
-        &init_cd,
+        &delegation_circuit,
+        &delegation_targets,
+        &initial_delegation_circuit,
         &step1,
     )?;
-    outer_cd.verifier_data().verify(step2.clone())?;
-    assert_eq!(step2.public_inputs[targets.level_idx], F::from_canonical_u64(2));
+    delegation_circuit.verifier_data().verify(step2.clone())?;
+    assert_eq!(step2.public_inputs[delegation_targets.level_idx], F::from_canonical_u64(2));
 
     // Forwarding sanity: all non-level PIs are forwarded unchanged each step.
-    for i in 0..targets.level_idx {
-        assert_eq!(base_outer.public_inputs[i], init_proof.proof.public_inputs[i]);
+    for i in 0..delegation_targets.level_idx {
+        assert_eq!(base_outer.public_inputs[i], init_del_proof.proof.public_inputs[i]);
         assert_eq!(step1.public_inputs[i],      base_outer.public_inputs[i]);
         assert_eq!(step2.public_inputs[i],      step1.public_inputs[i]);
     }
