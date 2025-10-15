@@ -1,59 +1,77 @@
-mod cred;
 mod proofs;
+mod cred;
 mod utils;
 
-use crate::cred::credential::{generate_issuer_keypair, issue_fixed_dummy_credential};
-use crate::proofs::delegate::{build_delegation_circuit, init_delegation, prove_delegation_step};
-use anyhow::Result;
-use plonky2::field::types::PrimeField64;
+use plonky2::field::types::Field;
 use plonky2::plonk::config::{GenericConfig, PoseidonGoldilocksConfig};
+use plonky2::recursion::cyclic_recursion::check_cyclic_proof_verifier_data;
+use std::time::{Instant, SystemTime};
+use crate::cred::credential::{generate_fixed_issuer_keypair, issue_fixed_dummy_credential};
+use crate::proofs::delegation::delegate::{build_delegation_circuit, prove_delegation_base, prove_delegation_step};
+use crate::proofs::delegation::initialize::{build_init_delegation_circuit, prove_init_delegation};
+use anyhow::Result;
 
 
 fn main() -> Result<()> {
+    // ---- Generics / config ----
     const D: usize = 2;
-    type Cfg = PoseidonGoldilocksConfig;
-    type F = <Cfg as GenericConfig<D>>::F;
+    type C = PoseidonGoldilocksConfig;
+    type F = <C as GenericConfig<D>>::F;
 
-    // Setup issuer key pair.
-    let issuer = generate_issuer_keypair();
-    // Issue a dummy credential signed by issuer
-    let cred = issue_fixed_dummy_credential(&issuer.sk)?;
+    // Choose how many recursive layers to build (excluding base).
+    let num_layers: usize = 10;
 
-    let init_circuit = init_delegation::<F, Cfg, D>(&cred, &issuer.pk)?;
-    init_circuit.verifier_data.verify(init_circuit.proof.clone())?;
-    println!("Init delegation proof passed!");
+    // ---- Build init-delegation circuit ----
+    let t_build_init = Instant::now();
+    let (init_cd, init_targets) = build_init_delegation_circuit::<F, C, D>()?;
+    println!("Init circuit build time: {:.2?}", t_build_init.elapsed());
 
-    // Build delegation circuits for 4 levels of delegation.
-    println!("Building 4 levels of delegation circuits...");
-    let build_start = std::time::Instant::now();
-    let del_circuit1 = build_delegation_circuit(&init_circuit.verifier_data, init_circuit.level_index_pis);
-    let del_circuit2 = build_delegation_circuit(&del_circuit1.data.verifier_data(), del_circuit1.level_index_pis);
-    let del_circuit3 = build_delegation_circuit(&del_circuit2.data.verifier_data(), del_circuit2.level_index_pis);
-    let del_circuit4 = build_delegation_circuit(&del_circuit3.data.verifier_data(), del_circuit3.level_index_pis);
-    println!("Generation time of 4 delegation circuits: {:?}", build_start.elapsed());
+    // ---- Prove init-delegation  ----
+    let issuer = generate_fixed_issuer_keypair();
+    let signed = issue_fixed_dummy_credential(&issuer.sk)?;
+    let t_prove_init = Instant::now();
+    let init_proof = prove_init_delegation::<F, C, D>(&init_cd, &init_targets, &signed, &issuer.pk)?;
+    println!("Init base proof time: {:.2?}", t_prove_init.elapsed());
 
-    let circuits = vec![&del_circuit1, &del_circuit2, &del_circuit3, &del_circuit4];
-    let mut prev_proof = init_circuit.proof;
+    // ---- Build delegation (outer) circuit once ----
+    let t_build_del = Instant::now();
+    let (del_cd, _del_common, del_targets) = build_delegation_circuit::<F, C, D>(&init_cd.common);
+    println!("Delegation circuit build time: {:.2?}", t_build_del.elapsed());
 
-    for (i, c) in circuits.iter().enumerate() {
-        println!("Starting delegation {}...", i + 1);
-        let proof_start = std::time::Instant::now();
-        let proof = prove_delegation_step(c, &prev_proof, &issuer.pk, c.level_index_pis)?;
-        println!("Delegation {} proof time: {:?}", i + 1, proof_start.elapsed());
+    // ---- Base delegation proof (level = 0) ----
+    let t_prove_base_outer = Instant::now();
+    let base_outer = prove_delegation_base::<F, C, D>(&del_cd, &del_targets, &init_cd, &init_proof.proof)?;
+    println!("Base outer proof time: {:.2?}", t_prove_base_outer.elapsed());
+    del_cd.verifier_data().verify(base_outer.clone())?;
+    check_cyclic_proof_verifier_data(&base_outer, &del_cd.verifier_only, &del_cd.common)?;
+    println!("Verified base outer | level = {}", base_outer.public_inputs[del_targets.level_idx]);
 
-        if proof.public_inputs[c.level_index_pis].to_canonical_u64() != (i as u64 + 1) {
-            panic!("Level index in public inputs is wrong!");
-        }
-        prev_proof = proof;
+    // ---- Build N recursive layers ----
+    let mut proofs = Vec::with_capacity(num_layers + 1);
+    proofs.push(base_outer);
+
+    for i in 0..num_layers {
+        let t_step = Instant::now();
+        let prev = proofs.last().unwrap();
+        let next = prove_delegation_step::<F, C, D>(&del_cd, &del_targets, &init_cd, prev)?;
+        println!("Delegation step {} proof time: {:.2?}", i + 1, t_step.elapsed());
+
+        del_cd.verifier_data().verify(next.clone())?;
+        check_cyclic_proof_verifier_data(&next, &del_cd.verifier_only, &del_cd.common)?;
+        println!(
+            "Verified step {:>2} | level = {}",
+            i + 1,
+            next.public_inputs[del_targets.level_idx]
+        );
+
+        proofs.push(next);
     }
 
-    // Verify the last proof
-    del_circuit4.data.verify(prev_proof)?;
-    println!("Final delegation proof passed!");
-
-    // TODO: Create a presentation proof where we provide knowledge of a delegation proof and create a proof of knowledge of the public key.
-
+    println!(
+        "Constructed {} proofs total (including base). Final level = {}",
+        proofs.len(),
+        proofs.last().unwrap().public_inputs[del_targets.level_idx]
+    );
+    
     Ok(())
 }
-
-
