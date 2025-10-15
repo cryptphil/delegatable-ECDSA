@@ -8,15 +8,18 @@ use crate::proofs::scalar_conversion::{
 };
 use crate::utils::parsing::find_field_bit_indices;
 use anyhow::Result;
+use hashbrown::HashMap;
 use plonky2::field::extension::Extendable;
 use plonky2::field::secp256k1_scalar::Secp256K1Scalar;
+use plonky2::field::types::Field;
 use plonky2::hash::hash_types::RichField;
 use plonky2::iop::target::Target;
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
-use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData, VerifierCircuitTarget};
-use plonky2::plonk::config::{AlgebraicHasher, GenericConfig, KeccakGoldilocksConfig, PoseidonGoldilocksConfig};
+use plonky2::plonk::circuit_data::{CircuitConfig, CircuitData, VerifierCircuitData};
+use plonky2::plonk::config::{AlgebraicHasher, GenericConfig, PoseidonGoldilocksConfig};
 use plonky2::plonk::proof::ProofWithPublicInputs;
+use plonky2::recursion::dummy_circuit::{dummy_circuit, dummy_proof};
 use plonky2_ecdsa::curve::ecdsa::ECDSAPublicKey;
 use plonky2_ecdsa::curve::secp256k1::Secp256K1;
 use plonky2_sha256::circuit::{array_to_bits, Sha256Targets};
@@ -27,7 +30,6 @@ pub struct InitDelegationTargets {
     pub hash_targets: Sha256Targets,
     pub level_pi: Target,
     pub rev_num_bytes: usize,
-    pub verifier_data_target: VerifierCircuitTarget, // we need this for recursion later on.
 }
 
 pub struct InitDelegationProof<
@@ -37,20 +39,16 @@ pub struct InitDelegationProof<
 > {
     pub proof: ProofWithPublicInputs<F, Cfg, D>,
     pub verifier_data: VerifierCircuitData<F, Cfg, D>,
-    //pub level_index_pis: usize, TODO: I dont think we need this, i.e., I removed it.
 }
 
 /// Create targets only (no build, no credential-bound data)
-pub fn make_init_delegation_circuit<F, Cfg, const D: usize>(
+fn make_init_delegation_circuit<F, Cfg, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
 ) -> Result<InitDelegationTargets>
 where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F = F>,
 {
-    // prepare for recursion. Not used in the initial case.
-    let verifier_data_target = builder.add_verifier_data_public_inputs();
-
     // Derive stable layout from a schema-stable dummy credential
     let dummy = issue_fixed_dummy_credential(&generate_fixed_issuer_keypair().sk)?;
     let dummy_json = dummy.credential.to_json()?;
@@ -79,20 +77,16 @@ where
         hash_targets,
         level_pi,
         rev_num_bytes,
-        verifier_data_target
     })
 }
 
-/// Build once without any credential-bound data
-pub fn build_init_delegation_circuit_data<F, Cfg, const D: usize>()
+pub fn build_init_delegation_circuit<F, Cfg, const D: usize>()
 -> Result<(CircuitData<F, Cfg, D>, InitDelegationTargets)>
 where
     F: RichField + Extendable<D>,
     Cfg: GenericConfig<D, F = F>,
 {
-    let mut config = CircuitConfig::standard_ecc_config();
-    config.zero_knowledge = true;
-    let mut builder = CircuitBuilder::<F, D>::new(config);
+    let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_ecc_config());
 
     // Create virtual targets
     let targets = make_init_delegation_circuit::<F, Cfg, D>(&mut builder)?;
@@ -130,7 +124,6 @@ where
         &cred_digest_bits,
     )?;
     pw.set_target(targets.level_pi, F::ZERO)?; // fill level witness with zero
-    pw.set_verifier_data_target::<Cfg, D>(&targets.verifier_data_target, &circuit.verifier_only)?;
 
     // Prove
     let proof = circuit.prove(pw)?;
@@ -141,6 +134,23 @@ where
     })
 }
 
+/// Create a deterministic "dummy" base proof.
+pub fn make_init_delegation_dummy_proof<F, C, const D: usize>(
+    circuit: &CircuitData<F, C, D>,
+) -> ProofWithPublicInputs<F, C, D>
+where
+    F: RichField + Extendable<D>,
+    C: GenericConfig<D, F = F>,
+    C::Hasher: AlgebraicHasher<F>,
+{
+    let overrides: HashMap<usize, F> = HashMap::new(); // all public inputs default to 0
+    dummy_proof::<F, C, D>(
+        &dummy_circuit::<F, C, D>(&circuit.common),
+        overrides,
+    )
+        .expect("failed to create dummy proof")
+}
+
 #[test]
 fn test_init_delegation() -> Result<()> {
     // Generics
@@ -148,13 +158,13 @@ fn test_init_delegation() -> Result<()> {
     type Cfg = PoseidonGoldilocksConfig;
     type F = <Cfg as GenericConfig<D>>::F;
 
-    // === 1) Build once  ===
+    // 1) Build once
     let build_start = std::time::Instant::now();
-    let (data, targets) = build_init_delegation_circuit_data::<F, Cfg, D>()?;
+    let (data, targets) = build_init_delegation_circuit::<F, Cfg, D>()?;
     let build_time = build_start.elapsed();
     println!("init_delegation: Circuit build time: {:?}", build_time);
 
-    // === 2) Generate proof ===
+    // 2) Generate proof
     let issuer_kp = generate_fixed_issuer_keypair();
     let signed = issue_fixed_dummy_credential(&issuer_kp.sk)?;
 
@@ -163,7 +173,7 @@ fn test_init_delegation() -> Result<()> {
     let prove_time = prove_start.elapsed();
     println!("init_delegation: Proof generation time: {:?}", prove_time);
 
-    // === 3) Verify proof ===
+    // 3) Verify proof
     let verify_start = std::time::Instant::now();
     init_proof.verifier_data.verify(init_proof.proof.clone())?;
 
@@ -175,6 +185,43 @@ fn test_init_delegation() -> Result<()> {
 
     // Sanity check
     assert!(!init_proof.proof.public_inputs.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn test_init_delegation_dummy() -> anyhow::Result<()> {
+    // --- Generics ---
+    const D: usize = 2;
+    type Cfg = PoseidonGoldilocksConfig;
+    type F = <Cfg as GenericConfig<D>>::F;
+
+    // uild the real init-delegation circuit once
+    let (real_cd, _targets) = build_init_delegation_circuit::<F, Cfg, D>()?;
+
+    // Create a dummy proof matching the circuit shape (all PIs = 0 by default)
+    let dummy_proof = make_init_delegation_dummy_proof::<F, Cfg, D>(&real_cd);
+
+    // Public inputs length matches the real circuit; all zeros.
+    assert_eq!(
+        dummy_proof.public_inputs.len(),
+        real_cd.common.num_public_inputs
+    );
+    assert!(dummy_proof
+        .public_inputs
+        .iter()
+        .all(|pi| pi == &F::ZERO));
+
+    // Verify with the dummy circuit (should succeed)
+    let dummy_cd = dummy_circuit::<F, Cfg, D>(&real_cd.common);
+    // clone because verify takes ownership
+    dummy_cd.verifier_data().verify(dummy_proof.clone())?;
+
+    // Verify with the real circuit (should fail; different constraint system)
+    assert!(
+        real_cd.verifier_data().verify(dummy_proof).is_err(),
+        "dummy proof must NOT verify against the real circuit"
+    );
 
     Ok(())
 }
